@@ -2111,9 +2111,10 @@ window.setSpeedConfig = function(val) {
   function ltdfIsActionReady(el) {
     if (!ltdfIsVisible(el)) return false;
     try {
-      const text = ltdfNorm(`${el.className || ""} ${el.getAttribute("disabled") || ""} ${el.getAttribute("aria-disabled") || ""} ${el.getAttribute("data-state") || ""}`);
+      const text = ltdfNorm(`${el.className || ""} ${el.getAttribute("disabled") || ""} ${el.getAttribute("aria-disabled") || ""} ${el.getAttribute("aria-busy") || ""} ${el.getAttribute("data-state") || ""} ${el.getAttribute("data-status") || ""}`);
       if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
-      if (/\b(disabled|desabilitado|loading|spinning|girando|busy|locked|bloqueado)\b/.test(text)) return false;
+      if (el.getAttribute("aria-busy") === "true") return false;
+      if (/\b(disabled|desabilitado|loading|loaded-false|spinning|girando|busy|locked|bloqueado|animating|animation|transition|transitioning|entering|leaving|pending|processing|processando)\b/.test(text)) return false;
       const style = getComputedStyle(el);
       if (style.pointerEvents === "none") return false;
       return true;
@@ -2127,11 +2128,24 @@ window.setSpeedConfig = function(val) {
     const button = ltdfFindActionButton();
     if (!ltdfIsActionReady(button)) return { ok:false, reason:"action_not_ready" };
     const now = Date.now();
+    if (window.__ltdfReadyActionClickPending) return { ok:false, reason:"ready_click_pending" };
     if (window.__ltdfLastReadyActionClickAt && now - window.__ltdfLastReadyActionClickAt < 120) {
       return { ok:false, reason:"ready_click_throttled" };
     }
-    window.__ltdfLastReadyActionClickAt = now;
-    return { ok:ltdfDispatchClick(button, source || "ready_action"), tag: button.tagName || "", cls: String(button.className || "") };
+    window.__ltdfReadyActionClickPending = true;
+    nativeClock.setTimeout(() => {
+      window.__ltdfReadyActionClickPending = false;
+      const freshButton = ltdfFindActionButton();
+      if (!ltdfIsActionReady(freshButton)) return;
+      const clickAt = Date.now();
+      if (window.__ltdfLastReadyActionClickAt && clickAt - window.__ltdfLastReadyActionClickAt < 120) return;
+      window.__ltdfLastReadyActionClickAt = clickAt;
+      ltdfDispatchClick(freshButton, source || "ready_action");
+      try {
+        window.__ltdfSpeedDebug.lastReadyActionClick = { source: source || "ready_action", at: clickAt, tag: freshButton.tagName || "", cls: String(freshButton.className || ""), debounced:true };
+      } catch (_) {}
+    }, 8);
+    return { ok:true, queued:true, debounceMs:8, tag: button.tagName || "", cls: String(button.className || "") };
   }
 
   function ltdfScheduleReadyClick(source) {
