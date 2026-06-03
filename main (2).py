@@ -2199,20 +2199,41 @@ window.setSpeedConfig = function(val) {
     }, typeof delay === "number" ? delay : 80);
   }
 
+  function ltdfClearNativeAutomationTimers() {
+    try { if (window.__ltdfNativeAutomationInterval) nativeClock.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
+    window.__ltdfNativeAutomationInterval = null;
+    try { if (window.__ltdfNativeReobserveTimer) nativeClock.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
+    window.__ltdfNativeReobserveTimer = null;
+  }
+
   function ltdfEnsureNativeActiveLoops() {
-    if (window.__ltdfNativeActiveLoopsInstalled) return;
+    ltdfClearNativeAutomationTimers();
     window.__ltdfNativeActiveLoopsInstalled = true;
     try {
-      const observer = new MutationObserver(() => {
-        // O alvo e buscado de novo dentro do tick; nao reusa node antigo.
-        ltdfScheduleNativeAutomationTick("button_ready_mutation", 100);
+      try { if (window.__ltdfNativeAutomationObserver) window.__ltdfNativeAutomationObserver.disconnect(); } catch (_) {}
+      const options = { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "aria-busy", "data-state", "data-status"] };
+      let observer = null;
+      const reobserve = () => {
+        if (!window.__ltdfNativeAutomationReady || !observer) return;
+        try { observer.observe(ltdfGetPersistentObserverRoot(), options); } catch (_) {}
+      };
+      observer = new MutationObserver(() => {
+        if (window.__ltdfNativeObserverBusy) return;
+        window.__ltdfNativeObserverBusy = true;
+        try { observer.disconnect(); } catch (_) {}
+        nativeClock.setTimeout(() => {
+          try {
+            // O alvo e buscado de novo dentro do tick; nao reusa node antigo.
+            ltdfScheduleNativeAutomationTick("button_ready_mutation", 80);
+          } finally {
+            window.__ltdfNativeObserverBusy = false;
+            window.__ltdfNativeReobserveTimer = nativeClock.setTimeout(reobserve, 260);
+          }
+        }, 120);
       });
-      observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
+      observer.observe(ltdfGetPersistentObserverRoot(), options);
       window.__ltdfNativeAutomationObserver = observer;
     } catch (_) {}
-    window.__ltdfNativeAutomationInterval = nativeClock.setInterval(() => {
-      ltdfRunNativeAutomationTick("button_ready_interval");
-    }, 250);
   }
 
   function ltdfArmNativeBootstrap(source) {
@@ -2242,15 +2263,27 @@ window.setSpeedConfig = function(val) {
 
     try {
       let pending = false;
+      let observer = null;
+      const reobserve = () => {
+        if (window.__ltdfNativeAutomationReady || !observer) return;
+        try { observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true }); } catch (_) {}
+      };
       const scheduleTryStart = (reason, delay) => {
         if (pending || window.__ltdfNativeAutomationReady) return;
         pending = true;
         nativeClock.setTimeout(() => {
-          pending = false;
-          tryStart(reason);
+          try {
+            tryStart(reason);
+          } finally {
+            pending = false;
+            if (!window.__ltdfNativeAutomationReady) {
+              nativeClock.setTimeout(reobserve, 260);
+            }
+          }
         }, typeof delay === "number" ? delay : 0);
       };
-      const observer = new MutationObserver(() => {
+      observer = new MutationObserver(() => {
+        try { observer.disconnect(); } catch (_) {}
         scheduleTryStart("bootstrap_mutation", 150);
       });
       observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true });
@@ -2262,7 +2295,11 @@ window.setSpeedConfig = function(val) {
 
   function installNativeAutomation(source) {
     try {
+      ltdfClearNativeAutomationTimers();
       if (window.__ltdfNativeAutomationInstalled) {
+        if (!window.__ltdfNativeAutomationReady && window.__ltdfNativeBootstrapArmed && !window.__ltdfNativeBootstrapObserver) {
+          window.__ltdfNativeBootstrapArmed = false;
+        }
         if (!window.__ltdfNativeAutomationReady) return ltdfArmNativeBootstrap(source || "reapply");
         ltdfScheduleNativeAutomationTick(source || "reapply", 80);
         return true;
