@@ -2123,6 +2123,7 @@ window.setSpeedConfig = function(val) {
   }
 
   function ltdfClickActionWhenReady(source) {
+    if (!window.__ltdfNativeAutomationReady) return { ok:false, reason:"native_ui_not_ready" };
     const button = ltdfFindActionButton();
     if (!ltdfIsActionReady(button)) return { ok:false, reason:"action_not_ready" };
     const now = Date.now();
@@ -2134,19 +2135,120 @@ window.setSpeedConfig = function(val) {
   }
 
   function ltdfScheduleReadyClick(source) {
+    if (!window.__ltdfNativeAutomationReady) return;
     if (!window.__ltdfNativeTurboEnabled && !window._ltdfUserActivated) return;
     const attempts = [0, 35, 75, 140, 240];
     attempts.forEach((delay) => nativeClock.setTimeout(() => ltdfClickActionWhenReady(source || "server_payload"), delay));
   }
 
+  function ltdfHasMainGameInterface() {
+    try {
+      const selectors = [
+        ".spin_center", "[class*='spin_center' i]", "[class*='spin-center' i]",
+        "button[data-testid*='spin' i]", "button[data-testid*='play' i]",
+        "button[aria-label*='spin' i]", "button[aria-label*='play' i]",
+        "[class*='bet' i]", "[class*='play' i]"
+      ];
+      for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (ltdfIsVisible(el)) return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function ltdfRunNativeAutomationTick(source) {
+    if (!window.__ltdfNativeAutomationReady) return false;
+    try { ltdfActivateNativeTurbo(source || "tick"); } catch (_) {}
+    try { ltdfClickActionWhenReady(source || "tick"); } catch (_) {}
+    return true;
+  }
+
+  function ltdfScheduleNativeAutomationTick(source, delay) {
+    if (!window.__ltdfNativeAutomationReady) return;
+    if (window.__ltdfNativeAutomationTickPending) return;
+    window.__ltdfNativeAutomationTickPending = true;
+    nativeClock.setTimeout(() => {
+      window.__ltdfNativeAutomationTickPending = false;
+      ltdfRunNativeAutomationTick(source || "scheduled_tick");
+    }, typeof delay === "number" ? delay : 80);
+  }
+
+  function ltdfEnsureNativeActiveLoops() {
+    if (window.__ltdfNativeActiveLoopsInstalled) return;
+    window.__ltdfNativeActiveLoopsInstalled = true;
+    try {
+      const observer = new MutationObserver(() => {
+        ltdfScheduleNativeAutomationTick("button_ready_mutation", 100);
+      });
+      observer.observe(document.documentElement || document, { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
+      window.__ltdfNativeAutomationObserver = observer;
+    } catch (_) {}
+    window.__ltdfNativeAutomationInterval = nativeClock.setInterval(() => {
+      ltdfRunNativeAutomationTick("button_ready_interval");
+    }, 250);
+  }
+
+  function ltdfArmNativeBootstrap(source) {
+    if (window.__ltdfNativeBootstrapArmed) return false;
+    window.__ltdfNativeBootstrapArmed = true;
+    window.__ltdfSpeedDebug.nativeAutomationWaiting = true;
+    window.__ltdfSpeedDebug.nativeAutomationWaitSource = source || "bootstrap";
+
+    let checks = 0;
+    const tryStart = (reason) => {
+      if (window.__ltdfNativeAutomationReady) return true;
+      checks += 1;
+      if (!ltdfHasMainGameInterface()) {
+        window.__ltdfSpeedDebug.nativeAutomationWaitChecks = checks;
+        return false;
+      }
+      window.__ltdfNativeAutomationReady = true;
+      window.__ltdfSpeedDebug.nativeAutomationWaiting = false;
+      window.__ltdfSpeedDebug.nativeAutomationReady = true;
+      window.__ltdfSpeedDebug.nativeAutomationReadySource = reason || source || "ready";
+      try { if (window.__ltdfNativeBootstrapObserver) window.__ltdfNativeBootstrapObserver.disconnect(); } catch (_) {}
+      try { if (window.__ltdfNativeBootstrapTimer) nativeClock.clearInterval(window.__ltdfNativeBootstrapTimer); } catch (_) {}
+      window.__ltdfNativeBootstrapObserver = null;
+      window.__ltdfNativeBootstrapTimer = null;
+      ltdfEnsureNativeActiveLoops();
+      ltdfRunNativeAutomationTick(reason || "bootstrap_ready");
+      return true;
+    };
+
+    if (tryStart(source || "bootstrap_initial")) return true;
+    try {
+      let pending = false;
+      const observer = new MutationObserver(() => {
+        if (pending || window.__ltdfNativeAutomationReady) return;
+        pending = true;
+        nativeClock.setTimeout(() => {
+          pending = false;
+          tryStart("bootstrap_mutation");
+        }, 150);
+      });
+      observer.observe(document.documentElement || document, { childList:true, subtree:true });
+      window.__ltdfNativeBootstrapObserver = observer;
+    } catch (_) {}
+    window.__ltdfNativeBootstrapTimer = nativeClock.setInterval(() => {
+      if (tryStart("bootstrap_interval") || checks > 120) {
+        try { if (window.__ltdfNativeBootstrapTimer) nativeClock.clearInterval(window.__ltdfNativeBootstrapTimer); } catch (_) {}
+        window.__ltdfNativeBootstrapTimer = null;
+      }
+    }, 500);
+    return false;
+  }
+
   function installNativeAutomation(source) {
     try {
       if (window.__ltdfNativeAutomationInstalled) {
-        ltdfActivateNativeTurbo(source || "reapply");
+        if (!window.__ltdfNativeAutomationReady) return ltdfArmNativeBootstrap(source || "reapply");
+        ltdfScheduleNativeAutomationTick(source || "reapply", 80);
         return true;
       }
       window.__ltdfNativeAutomationInstalled = true;
-      ltdfActivateNativeTurbo(source || "install");
       if (typeof window.WebSocket === "function" && !window.__ltdfNativeWebSocket) {
         window.__ltdfNativeWebSocket = window.WebSocket;
         window.WebSocket = new Proxy(window.__ltdfNativeWebSocket, {
@@ -2162,21 +2264,9 @@ window.setSpeedConfig = function(val) {
           },
         });
       }
-      try {
-        const observer = new MutationObserver(() => {
-          ltdfActivateNativeTurbo("mutation");
-          ltdfClickActionWhenReady("button_ready_mutation");
-        });
-        observer.observe(document.documentElement || document, { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
-        window.__ltdfNativeAutomationObserver = observer;
-      } catch (_) {}
-      nativeClock.setInterval(() => {
-        ltdfActivateNativeTurbo("interval");
-        ltdfClickActionWhenReady("button_ready_interval");
-      }, 250);
       window.__ltdfSpeedDebug.nativeAutomationInstalled = true;
       window.__ltdfSpeedDebug.nativeAutomationSource = source || "install";
-      return true;
+      return ltdfArmNativeBootstrap(source || "install");
     } catch (_) {
       return false;
     }
@@ -2184,6 +2274,7 @@ window.setSpeedConfig = function(val) {
 
   window.__ltdfActivateNativeTurbo = ltdfActivateNativeTurbo;
   window.__ltdfClickActionWhenReady = ltdfClickActionWhenReady;
+  window.__ltdfHasMainGameInterface = ltdfHasMainGameInterface;
 
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
@@ -4259,6 +4350,8 @@ class BrowserRunner:
                     f"Turbo nativo acionado: turbo={native.get('turbo')} ready_click={native.get('ready_click')}",
                     level="INFO",
                 )
+            elif native.get("reason") == "native_ui_not_ready":
+                self._log("Turbo nativo em espera: interface principal ainda nao carregou.", level="INFO")
             else:
                 self._log(f"Turbo nativo nao confirmado, fallback JS grafico: {native.get('reason')}", level="WARN")
                 native = self._apply_js_game_speed_on_driver(driver, config)
@@ -4412,13 +4505,19 @@ class BrowserRunner:
     def _activate_native_turbo_on_driver(self, driver: webdriver.Chrome) -> dict:
         result = driver.execute_script(
             """
+            const ready = typeof window.__ltdfHasMainGameInterface === 'function'
+              ? window.__ltdfHasMainGameInterface()
+              : false;
+            if (!ready) {
+              return { ok:false, reason:'native_ui_not_ready', ready:false, debug: window.__ltdfSpeedDebug || null };
+            }
             const turbo = typeof window.__ltdfActivateNativeTurbo === 'function'
               ? window.__ltdfActivateNativeTurbo('python_apply')
               : { ok:false, reason:'turbo_helper_missing' };
             const readyClick = typeof window.__ltdfClickActionWhenReady === 'function'
               ? window.__ltdfClickActionWhenReady('python_ready_probe')
               : { ok:false, reason:'ready_helper_missing' };
-            return { ok: !!(turbo && turbo.ok), turbo, ready_click: readyClick, debug: window.__ltdfSpeedDebug || null };
+            return { ok: !!(turbo && turbo.ok), ready:true, turbo, ready_click: readyClick, debug: window.__ltdfSpeedDebug || null };
             """
         ) or {}
         return dict(result or {})
