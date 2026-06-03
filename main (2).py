@@ -1694,11 +1694,19 @@ window.setSpeedConfig = function(val) {
 
   const normalizeConfig = (config) => {
     const speed = Math.max(0.1, Math.min(16, Number(config?.speed || 1) || 1));
-    return { enabled: !!config?.enabled, speed };
+    return {
+      enabled: !!config?.enabled,
+      speed,
+      cbSetIntervalChecked: config?.cbSetIntervalChecked !== false,
+      cbSetTimeoutChecked: config?.cbSetTimeoutChecked !== false,
+      cbPerformanceNowChecked: config?.cbPerformanceNowChecked !== false,
+      cbDateNowChecked: config?.cbDateNowChecked !== false,
+      cbRequestAnimationFrameChecked: config?.cbRequestAnimationFrameChecked !== false,
+    };
   };
 
   window.__ltdfSpeedDebug = {
-    mode: "raf-proxy",
+    mode: "time-proxy",
     ready: false,
     speed: 1.0,
     targetSpeed: 1.0,
@@ -1706,12 +1714,100 @@ window.setSpeedConfig = function(val) {
     configCount: 0,
     rafProxyInstalled: false,
     rafProxyReapplyCount: 0,
+    timeProxyInstalled: false,
   };
+
+  const nativeClock = window.__ltdfNativeClock || {
+    performanceNow: performance && typeof performance.now === "function" ? performance.now.bind(performance) : null,
+    dateNow: typeof Date.now === "function" ? Date.now.bind(Date) : null,
+    setTimeout: typeof window.setTimeout === "function" ? window.setTimeout.bind(window) : null,
+    setInterval: typeof window.setInterval === "function" ? window.setInterval.bind(window) : null,
+    clearTimeout: typeof window.clearTimeout === "function" ? window.clearTimeout.bind(window) : null,
+    clearInterval: typeof window.clearInterval === "function" ? window.clearInterval.bind(window) : null,
+  };
+  window.__ltdfNativeClock = nativeClock;
+  const realNow = () => nativeClock.performanceNow ? nativeClock.performanceNow() : (nativeClock.dateNow ? nativeClock.dateNow() : Date.now());
+
+  function effectiveSpeed(flagName) {
+    const cfg = normalizeConfig(window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || {});
+    if (!cfg.enabled || cfg.speed <= 1.0 || cfg[flagName] === false) return 1.0;
+    return cfg.speed;
+  }
+
+  function ensureTimeOrigin() {
+    if (!window.__ltdfTimeOrigin) {
+      const perf = realNow();
+      const date = nativeClock.dateNow ? nativeClock.dateNow() : Math.floor(perf);
+      window.__ltdfTimeOrigin = { perfReal: perf, perfVirtual: perf, dateReal: date, dateVirtual: date };
+    }
+    return window.__ltdfTimeOrigin;
+  }
+
+  function acceleratedPerfNow() {
+    const origin = ensureTimeOrigin();
+    const speed = effectiveSpeed("cbPerformanceNowChecked");
+    const current = realNow();
+    return speed > 1.0 ? origin.perfVirtual + ((current - origin.perfReal) * speed) : current;
+  }
+
+  function acceleratedDateNow() {
+    const origin = ensureTimeOrigin();
+    const speed = effectiveSpeed("cbDateNowChecked");
+    const current = nativeClock.dateNow ? nativeClock.dateNow() : Math.floor(realNow());
+    return Math.floor(speed > 1.0 ? origin.dateVirtual + ((current - origin.dateReal) * speed) : current);
+  }
+
+  function scaledDelay(delay, flagName) {
+    const ms = Math.max(0, Number(delay || 0) || 0);
+    const speed = effectiveSpeed(flagName);
+    return speed > 1.0 ? Math.max(0, ms / speed) : ms;
+  }
+
+  function rebaseTimeOrigin() {
+    try {
+      const origin = ensureTimeOrigin();
+      origin.perfVirtual = acceleratedPerfNow();
+      origin.perfReal = realNow();
+      origin.dateVirtual = acceleratedDateNow();
+      origin.dateReal = nativeClock.dateNow ? nativeClock.dateNow() : Math.floor(origin.perfReal);
+    } catch (_) {}
+  }
+
+  function installTimeProxies(source) {
+    try {
+      ensureTimeOrigin();
+      if (nativeClock.performanceNow && effectiveSpeed("cbPerformanceNowChecked") > 1.0) {
+        try {
+          Object.defineProperty(performance, "now", { configurable: true, writable: true, value: acceleratedPerfNow });
+        } catch (_) {
+          try { performance.now = acceleratedPerfNow; } catch (_) {}
+        }
+      }
+      if (nativeClock.dateNow && effectiveSpeed("cbDateNowChecked") > 1.0) {
+        try { Date.now = acceleratedDateNow; } catch (_) {}
+      }
+      if (nativeClock.setTimeout && effectiveSpeed("cbSetTimeoutChecked") > 1.0) {
+        window.setTimeout = function(handler, timeout, ...args) {
+          return nativeClock.setTimeout(handler, scaledDelay(timeout, "cbSetTimeoutChecked"), ...args);
+        };
+      }
+      if (nativeClock.setInterval && effectiveSpeed("cbSetIntervalChecked") > 1.0) {
+        window.setInterval = function(handler, timeout, ...args) {
+          return nativeClock.setInterval(handler, scaledDelay(timeout, "cbSetIntervalChecked"), ...args);
+        };
+      }
+      window.__ltdfSpeedDebug.timeProxyInstalled = true;
+      window.__ltdfSpeedDebug.timeProxySource = source || "install";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   function installRafProxy(source) {
     try {
       const cfg = normalizeConfig(window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || {});
-      if (!cfg.enabled || cfg.speed <= 1.0) return false;
+      if (!cfg.enabled || cfg.speed <= 1.0 || cfg.cbRequestAnimationFrameChecked === false) return false;
       if (window.__ltdfNativeRequestAnimationFrame && window.requestAnimationFrame === window.__ltdfRafProxy) return true;
       const currentRaf = window.requestAnimationFrame;
       if (typeof currentRaf !== "function") return false;
@@ -1726,7 +1822,7 @@ window.setSpeedConfig = function(val) {
       window.__ltdfRafProxy = function(callback) {
         return window.__ltdfNativeRequestAnimationFrame(function(timestamp) {
           try {
-            const speed = Math.max(0.1, Math.min(16, Number(window._ltdfSpeed || 1) || 1));
+            const speed = effectiveSpeed("cbRequestAnimationFrameChecked");
             if (!window.__ltdfRafOriginReal || speed <= 1.0) {
               window.__ltdfRafOriginReal = timestamp;
               window.__ltdfRafOriginVirtual = timestamp;
@@ -1753,8 +1849,10 @@ window.setSpeedConfig = function(val) {
 
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
+    rebaseTimeOrigin();
     window._ltdfSpeedConfig = next;
     window.setSpeedConfig(next.enabled ? next.speed : 1.0);
+    installTimeProxies(source || "apply");
     installRafProxy(source || "apply");
     window.__ltdfSpeedDebug.ready = window._ltdfReady;
     window.__ltdfSpeedDebug.speed = window._ltdfSpeed;
@@ -1764,7 +1862,7 @@ window.setSpeedConfig = function(val) {
     window.__ltdfSpeedDebug.source = source || "direct";
     return {
       ok: true,
-      mode: "raf-proxy",
+      mode: "time-proxy",
       speed: window._ltdfSpeed,
       targetSpeed: window._ltdfTargetSpeed,
       ready: window._ltdfReady,
@@ -1779,6 +1877,7 @@ window.setSpeedConfig = function(val) {
       if (typeof window.__ltdfApplySpeedConfig === "function") {
         window.__ltdfApplySpeedConfig(cfg, source || "late_reapply");
       }
+      installTimeProxies(source || "late_reapply");
       installRafProxy(source || "late_reapply");
     } catch (_) {}
   }
@@ -1789,12 +1888,13 @@ window.setSpeedConfig = function(val) {
   } else {
     setTimeout(() => ltdfLateSpeedReapply("document_already_ready"), 0);
   }
-  setTimeout(() => ltdfLateSpeedReapply("late_250ms"), 250);
-  setTimeout(() => ltdfLateSpeedReapply("late_1000ms"), 1000);
-  const rafFallbackStartedAt = Date.now();
-  const rafFallbackTimer = setInterval(() => {
+  nativeClock.setTimeout(() => ltdfLateSpeedReapply("late_250ms"), 250);
+  nativeClock.setTimeout(() => ltdfLateSpeedReapply("late_1000ms"), 1000);
+  const rafFallbackStartedAt = nativeClock.dateNow ? nativeClock.dateNow() : Date.now();
+  const rafFallbackTimer = nativeClock.setInterval(() => {
     ltdfLateSpeedReapply("raf_interval_guard");
-    if (Date.now() - rafFallbackStartedAt > 5000) clearInterval(rafFallbackTimer);
+    const now = nativeClock.dateNow ? nativeClock.dateNow() : Date.now();
+    if (now - rafFallbackStartedAt > 5000) nativeClock.clearInterval(rafFallbackTimer);
   }, 200);
 
   window.addEventListener("message", (event) => {
