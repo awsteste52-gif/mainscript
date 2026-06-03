@@ -34,6 +34,7 @@ class LTDFReactiveConfig:
     dom_timeout_seconds: int = 30
     loading_poll_ms: int = 800
     observer_cooldown_ms: int = 40
+    watchdog_interval_ms: int = 2500
     click_burst: int = 1
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
@@ -97,6 +98,7 @@ class LTDFReactiveInjector:
   const CONFIG = {{
     pollMs: {int(self.config.loading_poll_ms)},
     observerCooldownMs: {int(self.config.observer_cooldown_ms)},
+    watchdogMs: {int(self.config.watchdog_interval_ms)},
     clickBurst: {int(self.config.click_burst)},
     selectors: {{
       spinButton: {selectors.spin_button!r},
@@ -237,7 +239,7 @@ class LTDFReactiveInjector:
         startObserver();
         handleReadyMutation("observer_rebind");
       }}
-    }}, 2000);
+    }}, CONFIG.watchdogMs);
     return true;
   }}
 
@@ -263,7 +265,7 @@ class LTDFReactiveInjector:
 
   window.addEventListener("beforeunload", () => destroy("beforeunload"), {{ once:true }});
   boot();
-  return {{ ok:true, status:"INJETADO_COM_SUCESSO", pollMs:CONFIG.pollMs, href:location.href }};
+  return {{ ok:true, status:"INJETADO_COM_SUCESSO", pollMs:CONFIG.pollMs, watchdogMs:CONFIG.watchdogMs, href:location.href }};
 }})();
 """.strip()
 
