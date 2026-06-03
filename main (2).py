@@ -1690,22 +1690,40 @@ window.setSpeedConfig = function(val) {
 
 (function () {
   "use strict";
-  if (window.__LTDF_TURBO_ACTIVE__) {
-    try { console.warn("[WARN] Instancia do Turbo ja ativa nesta aba. Ignorando reinjecao."); } catch (_) {}
+  const ltdfDestroyTurboScope = function(reason) {
+    try { if (window.__LTDF_CHECK_INTERVAL__) window.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+    window.__LTDF_CHECK_INTERVAL__ = null;
+    try { if (window.__ltdfNativeDomReadyTimer) window.clearTimeout(window.__ltdfNativeDomReadyTimer); } catch (_) {}
+    window.__ltdfNativeDomReadyTimer = null;
+    try { if (window.__ltdfNativeAutomationInterval) window.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
+    window.__ltdfNativeAutomationInterval = null;
+    try { if (window.__ltdfNativeReobserveTimer) window.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
+    window.__ltdfNativeReobserveTimer = null;
+    try { if (window.__ltdfNativeAutomationObserver) window.__ltdfNativeAutomationObserver.disconnect(); } catch (_) {}
+    window.__ltdfNativeAutomationObserver = null;
+    try { if (window.__ltdfNativeBootstrapObserver) window.__ltdfNativeBootstrapObserver.disconnect(); } catch (_) {}
+    window.__ltdfNativeBootstrapObserver = null;
+    window.__ltdfNativeAutomationInstalled = false;
+    window.__ltdfNativeAutomationReady = false;
+    window.__ltdfNativeBootstrapArmed = false;
+    window.__ltdfNativeActiveLoopsInstalled = false;
+    window.__ltdfNativeAutomationTickPending = false;
+    window.__ltdfReadyActionClickPending = false;
+    window.__ltdfNativeObserverBusy = false;
+    window.__LTDF_TURBO_ACTIVE__ = false;
+    window.__LTDF_TURBO_LAST_RESET__ = { reason: reason || "reset", href: location.href, at: Date.now() };
+  };
+  window.__LTDF_TURBO_DESTROY__ = ltdfDestroyTurboScope;
+  ltdfDestroyTurboScope("pre_inject");
+  if (window.__ltdfSpeedHackInstalled && typeof window.__ltdfApplySpeedConfig === "function") {
+    window.__LTDF_TURBO_ACTIVE__ = true;
+    try {
+      window.__ltdfApplySpeedConfig(window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || { enabled:false, speed:1.0 }, "reinject_reset");
+    } catch (_) {}
     return;
   }
-  try { if (window.__LTDF_CHECK_INTERVAL__) window.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
-  window.__LTDF_CHECK_INTERVAL__ = null;
-  try { if (window.__ltdfNativeAutomationInterval) window.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
-  window.__ltdfNativeAutomationInterval = null;
-  try { if (window.__ltdfNativeReobserveTimer) window.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
-  window.__ltdfNativeReobserveTimer = null;
-  try { if (window.__ltdfNativeAutomationObserver) window.__ltdfNativeAutomationObserver.disconnect(); } catch (_) {}
-  window.__ltdfNativeAutomationObserver = null;
-  try { if (window.__ltdfNativeBootstrapObserver) window.__ltdfNativeBootstrapObserver.disconnect(); } catch (_) {}
-  window.__ltdfNativeBootstrapObserver = null;
   window.__LTDF_TURBO_ACTIVE__ = true;
-  window.__LTDF_TURBO_VERSION__ = "singleton_anti_freeze_v1";
+  window.__LTDF_TURBO_VERSION__ = "singleton_anti_freeze_v2";
   if (window.__ltdfSpeedHackInstalled) return;
   window.__ltdfSpeedHackInstalled = true;
   window.__ltdfSpeedScriptId = "ltdf_silent_native_speed_v1";
@@ -2156,12 +2174,19 @@ window.setSpeedConfig = function(val) {
       const clickAt = Date.now();
       if (window.__ltdfLastReadyActionClickAt && clickAt - window.__ltdfLastReadyActionClickAt < 120) return;
       window.__ltdfLastReadyActionClickAt = clickAt;
-      ltdfDispatchClick(freshButton, source || "ready_action");
+      const burstDelays = [0, 7, 14];
+      burstDelays.forEach((burstDelay, burstIndex) => {
+        nativeClock.setTimeout(() => {
+          const burstButton = ltdfFindActionButton();
+          if (!ltdfIsActionReady(burstButton)) return;
+          ltdfDispatchClick(burstButton, `${source || "ready_action"}_burst_${burstIndex + 1}`);
+        }, burstDelay);
+      });
       try {
-        window.__ltdfSpeedDebug.lastReadyActionClick = { source: source || "ready_action", at: clickAt, tag: freshButton.tagName || "", cls: String(freshButton.className || ""), debounced:true };
+        window.__ltdfSpeedDebug.lastReadyActionClick = { source: source || "ready_action", at: clickAt, tag: freshButton.tagName || "", cls: String(freshButton.className || ""), debounced:true, burst: burstDelays.length };
       } catch (_) {}
     }, 8);
-    return { ok:true, queued:true, debounceMs:8, tag: button.tagName || "", cls: String(button.className || "") };
+    return { ok:true, queued:true, debounceMs:8, burst:3, tag: button.tagName || "", cls: String(button.className || "") };
   }
 
   function ltdfScheduleReadyClick(source) {
