@@ -2218,6 +2218,8 @@ window.setSpeedConfig = function(val) {
   function ltdfClearNativeAutomationTimers() {
     try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
     window.__LTDF_CHECK_INTERVAL__ = null;
+    try { if (window.__ltdfNativeDomReadyTimer) nativeClock.clearTimeout(window.__ltdfNativeDomReadyTimer); } catch (_) {}
+    window.__ltdfNativeDomReadyTimer = null;
     try { if (window.__ltdfNativeAutomationInterval) nativeClock.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
     window.__ltdfNativeAutomationInterval = null;
     try { if (window.__ltdfNativeReobserveTimer) nativeClock.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
@@ -2267,6 +2269,8 @@ window.setSpeedConfig = function(val) {
         window.__ltdfSpeedDebug.nativeAutomationWaiting = true;
         return false;
       }
+      try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+      window.__LTDF_CHECK_INTERVAL__ = null;
       window.__ltdfNativeAutomationReady = true;
       window.__ltdfSpeedDebug.nativeAutomationWaiting = false;
       window.__ltdfSpeedDebug.nativeAutomationReady = true;
@@ -2279,35 +2283,36 @@ window.setSpeedConfig = function(val) {
       return true;
     };
 
-    try {
-      let pending = false;
-      let observer = null;
-      const reobserve = () => {
-        if (window.__ltdfNativeAutomationReady || !observer) return;
-        try { observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true }); } catch (_) {}
-      };
-      const scheduleTryStart = (reason, delay) => {
-        if (pending || window.__ltdfNativeAutomationReady) return;
-        pending = true;
-        nativeClock.setTimeout(() => {
-          try {
-            tryStart(reason);
-          } finally {
-            pending = false;
-            if (!window.__ltdfNativeAutomationReady) {
-              nativeClock.setTimeout(reobserve, 260);
-            }
+    const startLightPolling = () => {
+      if (window.__ltdfNativeAutomationReady) return true;
+      try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+      window.__LTDF_CHECK_INTERVAL__ = nativeClock.setInterval(() => {
+        try {
+          if (tryStart("bootstrap_light_poll")) {
+            try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+            window.__LTDF_CHECK_INTERVAL__ = null;
           }
-        }, typeof delay === "number" ? delay : 0);
+        } catch (_) {
+          try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+          window.__LTDF_CHECK_INTERVAL__ = null;
+        }
+      }, 1000);
+      window.__ltdfSpeedDebug.nativeAutomationPollMs = 1000;
+      return false;
+    };
+
+    if (document.readyState === "loading") {
+      window.__ltdfSpeedDebug.nativeAutomationWaitingForDom = true;
+      const onReady = () => {
+        window.__ltdfSpeedDebug.nativeAutomationWaitingForDom = false;
+        window.__ltdfNativeDomReadyTimer = nativeClock.setTimeout(startLightPolling, 250);
       };
-      observer = new MutationObserver(() => {
-        try { observer.disconnect(); } catch (_) {}
-        scheduleTryStart("bootstrap_mutation", 150);
-      });
-      observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true });
-      window.__ltdfNativeBootstrapObserver = observer;
-      scheduleTryStart(source || "bootstrap_async_initial", 0);
-    } catch (_) {}
+      try { document.addEventListener("DOMContentLoaded", onReady, { once:true }); } catch (_) {
+        window.__ltdfNativeDomReadyTimer = nativeClock.setTimeout(startLightPolling, 1000);
+      }
+      return false;
+    }
+    window.__ltdfNativeDomReadyTimer = nativeClock.setTimeout(startLightPolling, 250);
     return false;
   }
 
