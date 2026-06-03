@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib.util
 import ipaddress
@@ -3654,15 +3654,15 @@ class BrowserRunner:
                 config,
             )
         try:
-            self._log("Speed HTML5 driver etapa: tentando clique native silent.", level="INFO")
-            native = self._apply_native_game_speed_on_driver(driver, config)
+            self._log("Speed HTML5 driver etapa: tentando clique JS no motor grafico.", level="INFO")
+            native = self._apply_js_game_speed_on_driver(driver, config)
             if native.get("attempted"):
                 self._log(
-                    f"Speed HTML5 silent native: alvo={native.get('target', 1)} clicks={native.get('clicks', 0)} rect={native.get('rect')}",
+                    f"Speed HTML5 JS grafico: alvo={native.get('target', 1)} clicks={native.get('clicks', 0)} rect={native.get('rect')}",
                     level="INFO",
                 )
         except Exception as exc:
-            self._log(f"Speed HTML5 silent native falhou: {exc}", level="WARN")
+            self._log(f"Speed HTML5 JS grafico falhou: {exc}", level="WARN")
         try:
             debug = (result or {}).get("debug") or {}
             self._log(
@@ -3680,12 +3680,55 @@ class BrowserRunner:
             )
         except Exception:
             pass
-    def _apply_native_game_speed_on_driver(self, driver: webdriver.Chrome, config: dict) -> dict:
-        """Use the game's own speed control through silent CDP clicks.
+    @staticmethod
+    def _dispatch_js_click_on_driver(driver: webdriver.Chrome, x: float, y: float, selector: str = "") -> dict:
+        return driver.execute_script(
+            """
+            const x = Math.max(1, Math.floor(Number(arguments[0]) || 1));
+            const y = Math.max(1, Math.floor(Number(arguments[1]) || 1));
+            const selector = String(arguments[2] || '');
+            const target = document.elementFromPoint(x, y) || (selector ? document.querySelector(selector) : null) || document.body;
+            if (!target) return { ok:false, reason:'no_target', x, y };
+            const common = { bubbles:true, cancelable:true, composed:true, clientX:x, clientY:y, screenX:x, screenY:y, view:window };
+            const pointer = { ...common, pointerId:1, pointerType:'touch', isPrimary:true, button:0, buttons:1 };
+            const mouseDown = { ...common, button:0, buttons:1 };
+            const mouseUp = { ...common, button:0, buttons:0 };
+            try { if (typeof target.focus === 'function') target.focus({ preventScroll:true }); } catch (_) {}
+            const send = (Ctor, type, opts) => {
+                if (typeof Ctor !== 'function') return false;
+                try { target.dispatchEvent(new Ctor(type, opts)); return true; } catch (_) { return false; }
+            };
+            send(window.PointerEvent, 'pointerover', pointer);
+            send(window.PointerEvent, 'pointerenter', pointer);
+            send(window.PointerEvent, 'pointermove', pointer);
+            send(window.PointerEvent, 'pointerdown', pointer);
+            send(window.MouseEvent, 'mouseover', mouseDown);
+            send(window.MouseEvent, 'mousemove', mouseDown);
+            send(window.MouseEvent, 'mousedown', mouseDown);
+            try {
+                const touch = new Touch({ identifier:1, target, clientX:x, clientY:y, screenX:x, screenY:y, pageX:x + scrollX, pageY:y + scrollY });
+                target.dispatchEvent(new TouchEvent('touchstart', { bubbles:true, cancelable:true, composed:true, touches:[touch], targetTouches:[touch], changedTouches:[touch] }));
+                target.dispatchEvent(new TouchEvent('touchend', { bubbles:true, cancelable:true, composed:true, touches:[], targetTouches:[], changedTouches:[touch] }));
+            } catch (_) {}
+            send(window.PointerEvent, 'pointerup', { ...pointer, buttons:0 });
+            send(window.MouseEvent, 'mouseup', mouseUp);
+            send(window.MouseEvent, 'click', mouseUp);
+            try {
+                if (typeof target.click === 'function' && !/^(canvas|html|body)$/i.test(target.tagName || '')) target.click();
+            } catch (_) {}
+            return { ok:true, x, y, tag:(target.tagName || '').toLowerCase(), id:target.id || '', cls:String(target.className || '') };
+            """,
+            float(x),
+            float(y),
+            selector,
+        ) or {}
 
-        This avoids clock/timer hooks, which freeze some canvas games. Coordinates are
-        relative to the largest visible canvas/iframe, matching the native +/- control
-        shown near the lower edge of the mobile game viewport.
+    def _apply_js_game_speed_on_driver(self, driver: webdriver.Chrome, config: dict) -> dict:
+        """Use the game's own speed control through JavaScript DOM clicks.
+
+        This avoids clock/timer hooks and also avoids native mouse
+        movement. Coordinates are relative to the largest visible canvas/iframe,
+        matching the +/- control shown near the lower edge of the mobile viewport.
         """
         try:
             enabled = bool(config.get("enabled"))
@@ -3736,27 +3779,17 @@ class BrowserRunner:
             (left + (width * 0.90), top + (height * 0.930)),
         ]
 
-        def cdp_click(x: float, y: float) -> None:
-            params = {"x": int(x), "y": int(y), "button": "left", "clickCount": 1}
-            try:
-                driver.execute_cdp_cmd("Input.dispatchMouseEvent", {**params, "type": "mouseMoved"})
-                driver.execute_cdp_cmd("Input.dispatchMouseEvent", {**params, "type": "mousePressed"})
-                driver.execute_cdp_cmd("Input.dispatchMouseEvent", {**params, "type": "mouseReleased"})
-            except Exception:
-                driver.execute_cdp_cmd("Input.dispatchTouchEvent", {
-                    "type": "touchStart",
-                    "touchPoints": [{"x": int(x), "y": int(y), "radiusX": 2, "radiusY": 2}],
-                })
-                driver.execute_cdp_cmd("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        def js_click(x: float, y: float) -> None:
+            self._dispatch_js_click_on_driver(driver, x, y)
             time.sleep(0.06)
 
         for _ in range(4):
             for point in minus_points:
-                cdp_click(*point)
+                js_click(*point)
         clicks = max(0, target_steps - 1)
         for _ in range(clicks):
             for point in plus_points:
-                cdp_click(*point)
+                js_click(*point)
         return {"attempted": True, "target": target_steps, "clicks": clicks * len(plus_points), "rect": rect}
     def set_calibrated_cell(self, cell: tuple[int, int, int, int] | None) -> None:
         self.calibrated_cell = cell
@@ -4580,38 +4613,7 @@ class BrowserRunner:
             _cdp_touch("touchEnd", [])
 
         if action == "mirror_click":
-            try:
-                _cdp_tap(x, y)
-            except Exception:
-                pass
-            driver.execute_script(
-                """
-                const x = Number(arguments[0]);
-                const y = Number(arguments[1]);
-                const el = document.elementFromPoint(x, y) || (arguments[2] ? document.querySelector(arguments[2]) : null);
-                if (!el) return false;
-                const opts = { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window };
-                try { if (typeof el.focus === 'function') el.focus({ preventScroll:true }); } catch (_) {}
-                ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((type) => {
-                    try { el.dispatchEvent(new MouseEvent(type, opts)); } catch (_) {}
-                });
-                try {
-                    const touch = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
-                    el.dispatchEvent(new TouchEvent('touchstart', { bubbles:true, cancelable:true, touches:[touch], targetTouches:[touch], changedTouches:[touch] }));
-                    el.dispatchEvent(new TouchEvent('touchend', { bubbles:true, cancelable:true, touches:[], targetTouches:[], changedTouches:[touch] }));
-                } catch (_) {}
-                return true;
-                """,
-                x,
-                y,
-                path,
-            )
-            if sys.platform == "win32":
-                try:
-                    screen_x, screen_y = self._viewport_point_to_screen(driver, x_ratio, y_ratio)
-                    self._native_mouse_click(screen_x, screen_y)
-                except Exception:
-                    pass
+            self._dispatch_js_click_on_driver(driver, x, y, path)
             return
 
         if action == "mirror_input":
@@ -4914,6 +4916,7 @@ class BrowserRunner:
             def _run_click(current_site: SiteTabState) -> dict:
                 self._switch_to_handle(driver, current_site.handle)
                 self._apply_site_mobile_view(driver)
+                self._install_hush_plus_cdp_hooks(driver)
                 viewport = driver.execute_script("return {width: window.innerWidth || 430, height: window.innerHeight || 932};") or {}
                 width = max(1, int(viewport.get("width") or 430))
                 height = max(1, int(viewport.get("height") or 932))
@@ -4921,21 +4924,7 @@ class BrowserRunner:
                 y_ratio = 0.5 if payload.y_ratio is None else float(payload.y_ratio)
                 x = max(1, min(width - 1, int(width * x_ratio)))
                 y = max(1, min(height - 1, int(height * y_ratio)))
-                result = driver.execute_script(
-                    """
-                    const x = arguments[0], y = arguments[1];
-                    const el = document.elementFromPoint(x, y);
-                    if (!el) return { ok:false, reason:'elementFromPoint' };
-                    const opts = { bubbles:true, cancelable:true, clientX:x, clientY:y, view:window };
-                    try { if (typeof el.focus === 'function') el.focus({ preventScroll:true }); } catch (_) {}
-                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((type) => {
-                        try { el.dispatchEvent(new MouseEvent(type, opts)); } catch (_) {}
-                    });
-                    return { ok:true, tag:(el.tagName || '').toLowerCase() };
-                    """,
-                    x,
-                    y,
-                )
+                result = self._dispatch_js_click_on_driver(driver, x, y)
                 time.sleep(0.15)
                 self._capture_site_preview_unlocked(driver, runtime, current_site)
                 return {"site_index": current_site.index, "x": x, "y": y, "result": result}
@@ -5254,6 +5243,10 @@ class BrowserRunner:
             driver.get(url)
         except Exception:
             raise
+        try:
+            self._install_hush_plus_cdp_hooks(driver)
+        except Exception as exc:
+            self._log(f"Falha ao reinjetar aceleracao no motor grafico apos abrir aba: {exc}", level="WARN")
         state = SiteTabState(
             index=index,
             url=url,
