@@ -338,6 +338,7 @@ GRID_PREVIEW_MIN_INTERVAL_MASTER = 0.067
 GRID_PREVIEW_MIN_INTERVAL_SLAVE = 0.08
 GRID_DASHBOARD_REFRESH_MS = 66
 GRID_CAPTURE_JPEG_QUALITY = 48
+NETWORK_PROXY_MIN_CLICK_INTERVAL_SECONDS = 0.07
 
 
 @dataclass
@@ -4016,7 +4017,7 @@ class BrowserRunner:
     def _fire_game_speed_clicks(self, driver: webdriver.Chrome, minus_points: list[tuple[float, float]], plus_points: list[tuple[float, float]], target_steps: int) -> int:
         def js_click(x: float, y: float) -> None:
             self._dispatch_js_click_on_driver(driver, x, y)
-            time.sleep(0.025)
+            time.sleep(NETWORK_PROXY_MIN_CLICK_INTERVAL_SECONDS)
 
         for _ in range(4):
             for point in minus_points:
@@ -6034,7 +6035,9 @@ class BrowserRunner:
                     "--disable-background-timer-throttling",
                     "--disable-backgrounding-occluded-windows",
                     "--disable-client-side-phishing-detection",
+                    "--disable-connection-purpose-override",
                     "--disable-default-apps",
+                    "--disable-http2",
                     "--disable-notifications",
                     "--disable-renderer-backgrounding",
                     "--disable-save-password-bubble",
@@ -6046,6 +6049,7 @@ class BrowserRunner:
                     "--mute-audio",
                     "--no-default-browser-check",
                     "--no-first-run",
+                    "--enable-tcp-fast-open",
                     f"--load-extension={','.join(extension_paths)}",
                     f"--proxy-bypass-list={proxy_bypass}",
                     "--disable-features=IsolateOrigins,site-per-process",
