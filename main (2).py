@@ -1690,6 +1690,22 @@ window.setSpeedConfig = function(val) {
 
 (function () {
   "use strict";
+  if (window.__LTDF_TURBO_ACTIVE__) {
+    try { console.warn("[WARN] Instancia do Turbo ja ativa nesta aba. Ignorando reinjecao."); } catch (_) {}
+    return;
+  }
+  try { if (window.__LTDF_CHECK_INTERVAL__) window.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+  window.__LTDF_CHECK_INTERVAL__ = null;
+  try { if (window.__ltdfNativeAutomationInterval) window.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
+  window.__ltdfNativeAutomationInterval = null;
+  try { if (window.__ltdfNativeReobserveTimer) window.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
+  window.__ltdfNativeReobserveTimer = null;
+  try { if (window.__ltdfNativeAutomationObserver) window.__ltdfNativeAutomationObserver.disconnect(); } catch (_) {}
+  window.__ltdfNativeAutomationObserver = null;
+  try { if (window.__ltdfNativeBootstrapObserver) window.__ltdfNativeBootstrapObserver.disconnect(); } catch (_) {}
+  window.__ltdfNativeBootstrapObserver = null;
+  window.__LTDF_TURBO_ACTIVE__ = true;
+  window.__LTDF_TURBO_VERSION__ = "singleton_anti_freeze_v1";
   if (window.__ltdfSpeedHackInstalled) return;
   window.__ltdfSpeedHackInstalled = true;
   window.__ltdfSpeedScriptId = "ltdf_silent_native_speed_v1";
@@ -2200,6 +2216,8 @@ window.setSpeedConfig = function(val) {
   }
 
   function ltdfClearNativeAutomationTimers() {
+    try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
+    window.__LTDF_CHECK_INTERVAL__ = null;
     try { if (window.__ltdfNativeAutomationInterval) nativeClock.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
     window.__ltdfNativeAutomationInterval = null;
     try { if (window.__ltdfNativeReobserveTimer) nativeClock.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
