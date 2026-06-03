@@ -2141,6 +2141,10 @@ window.setSpeedConfig = function(val) {
     attempts.forEach((delay) => nativeClock.setTimeout(() => ltdfClickActionWhenReady(source || "server_payload"), delay));
   }
 
+  function ltdfGetPersistentObserverRoot() {
+    return document.documentElement || document.body || document;
+  }
+
   function ltdfFindMainGameTarget() {
     try {
       const selector = [
@@ -2186,9 +2190,10 @@ window.setSpeedConfig = function(val) {
     window.__ltdfNativeActiveLoopsInstalled = true;
     try {
       const observer = new MutationObserver(() => {
+        // O alvo e buscado de novo dentro do tick; nao reusa node antigo.
         ltdfScheduleNativeAutomationTick("button_ready_mutation", 100);
       });
-      observer.observe(document.documentElement || document, { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
+      observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
       window.__ltdfNativeAutomationObserver = observer;
     } catch (_) {}
     window.__ltdfNativeAutomationInterval = nativeClock.setInterval(() => {
@@ -2234,7 +2239,7 @@ window.setSpeedConfig = function(val) {
       const observer = new MutationObserver(() => {
         scheduleTryStart("bootstrap_mutation", 150);
       });
-      observer.observe(document.documentElement || document, { childList:true, subtree:true });
+      observer.observe(ltdfGetPersistentObserverRoot(), { childList:true, subtree:true });
       window.__ltdfNativeBootstrapObserver = observer;
       scheduleTryStart(source || "bootstrap_async_initial", 0);
     } catch (_) {}
@@ -2275,6 +2280,7 @@ window.setSpeedConfig = function(val) {
   window.__ltdfActivateNativeTurbo = ltdfActivateNativeTurbo;
   window.__ltdfClickActionWhenReady = ltdfClickActionWhenReady;
   window.__ltdfHasMainGameInterface = ltdfHasMainGameInterface;
+  window.__ltdfGetPersistentObserverRoot = ltdfGetPersistentObserverRoot;
 
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
