@@ -1727,6 +1727,24 @@ window.setSpeedConfig = function(val) {
     };
   };
 
+  function ltdfLateSpeedReapply(source) {
+    try {
+      const cfg = window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || { enabled: false, speed: 1.0 };
+      if (typeof window.__ltdfApplySpeedConfig === "function") {
+        window.__ltdfApplySpeedConfig(cfg, source || "late_reapply");
+      }
+    } catch (_) {}
+  }
+
+  window.__ltdfForceSpeedReapply = ltdfLateSpeedReapply;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => ltdfLateSpeedReapply("dom_content_loaded"), { once: true });
+  } else {
+    setTimeout(() => ltdfLateSpeedReapply("document_already_ready"), 0);
+  }
+  setTimeout(() => ltdfLateSpeedReapply("late_250ms"), 250);
+  setTimeout(() => ltdfLateSpeedReapply("late_1000ms"), 1000);
+
   window.addEventListener("message", (event) => {
     if (event.source !== window || !event.data) return;
     if (event.data.command === "setSpeedConfig") {
@@ -1840,6 +1858,16 @@ function registerSession() {
     return sendWS({ action: 'register_session', domain: 'extension-background', role: ROLE_MODE === 'slave_only' ? 'slave' : 'master' });
 }
 
+function sendHeartbeat() {
+    return sendWS({
+        action: 'heartbeat',
+        domain: 'extension-background',
+        role: ROLE_MODE === 'slave_only' ? 'slave' : 'master',
+        activeUrl: _activeWsUrl,
+        ts: Date.now(),
+    }).catch(() => {});
+}
+
 function currentWsUrl() {
     if (!Array.isArray(WS_URLS) || !WS_URLS.length) return null;
     return WS_URLS[_connectIndex % WS_URLS.length];
@@ -1871,6 +1899,7 @@ function connect(force = false) {
     ws.onopen = () => {
         while (_pending.length) ws.send(_pending.shift());
         registerSession().catch(() => {});
+        sendHeartbeat().catch(() => {});
         broadcastTabs({ action: 'bg_ws_status', connected: true, activeUrl: _activeWsUrl, candidates: WS_URLS });
     };
     ws.onmessage = (e) => {
@@ -2019,6 +2048,13 @@ chrome.storage.local.get(['ltdf_speed_config'], (stored) => {
     }
     ensureSessionId().then(connect);
 });
+setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        sendHeartbeat();
+        return;
+    }
+    connect();
+}, 25000);
 """.strip()
 
 PANEL_JS = r"""
@@ -5415,6 +5451,14 @@ class BrowserRunner:
                 },
                 {
                     "matches": ["<all_urls>"],
+                    "js": ["speed_late.js"],
+                    "run_at": "document_end",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                    "world": "MAIN",
+                },
+                {
+                    "matches": ["<all_urls>"],
                     "js": ["speed_bridge.js"],
                     "run_at": "document_start",
                     "all_frames": True,
@@ -5447,6 +5491,28 @@ class BrowserRunner:
             + ";\n"
             + SPEED_HACK_PAGE_SCRIPT
         )
+        speed_late_js = (
+            "window.__ltdfSpeedInitialConfig = "
+            + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
+            + ";\n"
+            + """
+(function () {
+  const cfg = window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || { enabled:false, speed:1.0 };
+  if (typeof window.__ltdfForceSpeedReapply === 'function') {
+    window.__ltdfForceSpeedReapply('document_end_content_script');
+    return;
+  }
+  if (typeof window.__ltdfApplySpeedConfig === 'function') {
+    window.__ltdfApplySpeedConfig(cfg, 'document_end_content_script');
+    return;
+  }
+  window._ltdfSpeedConfig = cfg;
+  window._ltdfSpeed = cfg && cfg.enabled ? Number(cfg.speed || 1) || 1 : 1.0;
+  window._ltdfTargetSpeed = window._ltdfSpeed;
+})();
+//# sourceURL=ltdf_speed_late.js
+            """.strip()
+        )
         speed_bridge_js = SPEED_BRIDGE_JS.replace(
             "__DEFAULT_SPEED_CONFIG__",
             json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False),
@@ -5454,6 +5520,7 @@ class BrowserRunner:
         (extension_dir / "background.js").write_text(background_js, encoding="utf-8")
         (extension_dir / "panel.js").write_text(panel_js, encoding="utf-8")
         (extension_dir / "speed.js").write_text(speed_js, encoding="utf-8")
+        (extension_dir / "speed_late.js").write_text(speed_late_js, encoding="utf-8")
         (extension_dir / "speed_bridge.js").write_text(speed_bridge_js, encoding="utf-8")
         logger.info(
             "mirror_extension_built",
