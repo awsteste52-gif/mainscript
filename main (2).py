@@ -228,11 +228,12 @@ DEFAULT_HTML5_SPEED_CONFIG = {
     "cbDateNowChecked": True,
     "cbRequestAnimationFrameChecked": True,
 }
+HTML5_SPEED_MAX_MULTIPLIER = 4.0
 
 
 def build_html5_speed_config(data: WorkspaceData | None) -> dict:
     current = data or WorkspaceData()
-    speed = max(0.1, min(16.0, float(getattr(current, "html5_speed", 1.0) or 1.0)))
+    speed = max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, float(getattr(current, "html5_speed", 1.0) or 1.0)))
     return {
         "enabled": bool(getattr(current, "html5_speed_enabled", False)),
         "speed": speed,
@@ -252,7 +253,7 @@ def normalize_speed_config_for_cdp(config: dict | None) -> dict:
         speed = 1.0
     return {
         "enabled": bool(config.get("enabled", False)),
-        "speed": max(0.1, min(16.0, speed)),
+        "speed": max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, speed)),
         "cbSetIntervalChecked": config.get("cbSetIntervalChecked") is not False,
         "cbSetTimeoutChecked": config.get("cbSetTimeoutChecked") is not False,
         "cbPerformanceNowChecked": config.get("cbPerformanceNowChecked") is not False,
@@ -338,7 +339,7 @@ GRID_PREVIEW_MIN_INTERVAL_MASTER = 0.067
 GRID_PREVIEW_MIN_INTERVAL_SLAVE = 0.08
 GRID_DASHBOARD_REFRESH_MS = 66
 GRID_CAPTURE_JPEG_QUALITY = 48
-NETWORK_PROXY_MIN_CLICK_INTERVAL_SECONDS = 0.07
+NETWORK_PROXY_MIN_CLICK_INTERVAL_SECONDS = 0.12
 
 
 @dataclass
@@ -1662,7 +1663,7 @@ window._ltdfSpeedConfig = { enabled: false, speed: 1.0 };
 window.setSpeedConfig = function(val) {
   var s = parseFloat(val);
   if (!isNaN(s)) {
-    s = Math.max(0.1, Math.min(16, s));
+    s = Math.max(0.1, Math.min(4, s));
     window._ltdfSpeed = s;
     window._ltdfTargetSpeed = s;
     window._ltdfUserActivated = s > 1.0;
@@ -1694,7 +1695,7 @@ window.setSpeedConfig = function(val) {
   window.__ltdfSpeedScriptId = "ltdf_silent_native_speed_v1";
 
   const normalizeConfig = (config) => {
-    const speed = Math.max(0.1, Math.min(16, Number(config?.speed || 1) || 1));
+    const speed = Math.max(0.1, Math.min(4, Number(config?.speed || 1) || 1));
     return {
       enabled: !!config?.enabled,
       speed,
@@ -1918,7 +1919,7 @@ SPEED_BRIDGE_JS = r"""
   const DEFAULT_SPEED_CONFIG = __DEFAULT_SPEED_CONFIG__;
 
   function normalizeSpeedConfig(config) {
-    const speed = Math.max(0.1, Math.min(16, Number(config?.speed || 1) || 1));
+    const speed = Math.max(0.1, Math.min(4, Number(config?.speed || 1) || 1));
     return {
       enabled: !!config?.enabled,
       speed,
@@ -1990,7 +1991,7 @@ function ensureSessionId() {
 }
 
 function normalizeSpeedConfig(config) {
-    const speed = Math.max(0.1, Math.min(16, Number(config?.speed || 1) || 1));
+    const speed = Math.max(0.1, Math.min(4, Number(config?.speed || 1) || 1));
     return {
         enabled: !!config?.enabled,
         speed,
@@ -2313,7 +2314,7 @@ PANEL_JS = r"""
     let currentSpeedConfig = DEFAULT_SPEED_CONFIG;
 
     function normalizeSpeedConfig(config) {
-        const speed = Math.max(0.1, Math.min(16, Number(config?.speed || 1) || 1));
+        const speed = Math.max(0.1, Math.min(4, Number(config?.speed || 1) || 1));
         return {
             enabled: !!config?.enabled,
             speed,
@@ -4043,7 +4044,7 @@ class BrowserRunner:
             target_speed = float(config.get("speed", 1.0) or 1.0) if enabled else 1.0
         except Exception:
             target_speed = 1.0
-        target_steps = int(max(1, min(8, round(target_speed))))
+        target_steps = int(max(1, min(HTML5_SPEED_MAX_MULTIPLIER, round(target_speed))))
         if target_steps <= 1:
             return {"attempted": False, "target": target_steps, "clicks": 0, "rect": None}
 
@@ -6975,7 +6976,7 @@ class LTDFSingleFileApp(ctk.CTk):
         self.quick_speed_choice_var = ctk.StringVar(value="1x")
         self.quick_speed_menu = ctk.CTkOptionMenu(
             quick_speed,
-            values=["0.5x", "1x", "2x", "4x", "8x", "Custom"],
+            values=["0.5x", "1x", "2x", "3x", "4x", "Custom"],
             variable=self.quick_speed_choice_var,
             command=self._set_html5_speed_quick,
             font=(FONT_MONO, 11),
@@ -7073,7 +7074,7 @@ class LTDFSingleFileApp(ctk.CTk):
         ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 8))
         self.html5_speed_value_label = ctk.CTkLabel(speed, text="1.00x", text_color=C_TEXT, font=(FONT_MONO, 12, "bold"))
         self.html5_speed_value_label.grid(row=1, column=1, sticky="e", padx=12, pady=(0, 8))
-        self.html5_speed_slider = ctk.CTkSlider(speed, from_=0.25, to=8.0, number_of_steps=31, command=self._on_html5_speed_slider_changed)
+        self.html5_speed_slider = ctk.CTkSlider(speed, from_=0.25, to=HTML5_SPEED_MAX_MULTIPLIER, number_of_steps=15, command=self._on_html5_speed_slider_changed)
         self.html5_speed_slider.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 8))
         ctk.CTkLabel(
             speed,
@@ -7304,8 +7305,8 @@ class LTDFSingleFileApp(ctk.CTk):
             0.5: "0.5x",
             1.0: "1x",
             2.0: "2x",
+            3.0: "3x",
             4.0: "4x",
-            8.0: "8x",
         }
         for preset, label in presets.items():
             if abs(speed - preset) < 0.05:
@@ -7317,8 +7318,8 @@ class LTDFSingleFileApp(ctk.CTk):
             "0.5x": 0.5,
             "1x": 1.0,
             "2x": 2.0,
+            "3x": 3.0,
             "4x": 4.0,
-            "8x": 8.0,
         }
         return mapping.get(choice)
 
@@ -7363,7 +7364,7 @@ class LTDFSingleFileApp(ctk.CTk):
                 selected_speed = float(self.html5_speed_slider.get()) if hasattr(self, "html5_speed_slider") else float(self.workspace_data.html5_speed or 1.0)
             except Exception:
                 selected_speed = 1.0
-            selected_speed = max(0.1, min(16.0, selected_speed))
+            selected_speed = max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, selected_speed))
             selected_enabled = selected_speed > 1.05
             if hasattr(self, "html5_speed_enabled_var"):
                 self.html5_speed_enabled_var.set(selected_enabled)
