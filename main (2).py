@@ -2168,6 +2168,7 @@ window.setSpeedConfig = function(val) {
   function ltdfClickActionWhenReady(source) {
     if (!window.__ltdfNativeAutomationReady) return { ok:false, reason:"native_ui_not_ready" };
     const button = ltdfFindActionButton();
+    if (!ltdfHasRenderableGeometry(button)) return { ok:false, reason:"action_not_rendered" };
     if (!ltdfIsActionReady(button)) return { ok:false, reason:"action_not_ready" };
     const now = Date.now();
     if (window.__ltdfReadyActionClickPending) return { ok:false, reason:"ready_click_pending" };
@@ -2178,6 +2179,7 @@ window.setSpeedConfig = function(val) {
     nativeClock.setTimeout(() => {
       window.__ltdfReadyActionClickPending = false;
       const freshButton = ltdfFindActionButton();
+      if (!ltdfHasRenderableGeometry(freshButton)) return;
       if (!ltdfIsActionReady(freshButton)) return;
       const clickAt = Date.now();
       if (window.__ltdfLastReadyActionClickAt && clickAt - window.__ltdfLastReadyActionClickAt < 120) return;
@@ -2186,6 +2188,7 @@ window.setSpeedConfig = function(val) {
       burstDelays.forEach((burstDelay, burstIndex) => {
         nativeClock.setTimeout(() => {
           const burstButton = ltdfFindActionButton();
+          if (!ltdfHasRenderableGeometry(burstButton)) return;
           if (!ltdfIsActionReady(burstButton)) return;
           ltdfDispatchClick(burstButton, `${source || "ready_action"}_burst_${burstIndex + 1}`);
         }, burstDelay);
@@ -2199,6 +2202,7 @@ window.setSpeedConfig = function(val) {
 
   function ltdfScheduleReadyClick(source) {
     if (!window.__ltdfNativeAutomationReady) return;
+    if (!ltdfHasRenderableGeometry(ltdfFindActionButton())) return;
     if (!window.__ltdfNativeTurboEnabled && !window._ltdfUserActivated) return;
     const attempts = [0, 35, 75, 140, 240];
     attempts.forEach((delay) => nativeClock.setTimeout(() => ltdfClickActionWhenReady(source || "server_payload"), delay));
@@ -2231,8 +2235,19 @@ window.setSpeedConfig = function(val) {
     }
   }
 
+  function ltdfHasRenderableGeometry(el) {
+    try {
+      if (!el || !el.isConnected) return false;
+      const rect = el.getBoundingClientRect();
+      return !!((el.offsetWidth > 0 || rect.width > 0) && (el.offsetHeight > 0 || rect.height > 0));
+    } catch (_) {
+      return false;
+    }
+  }
+
   function ltdfRunNativeAutomationTick(source) {
     if (!window.__ltdfNativeAutomationReady) return false;
+    if (!ltdfHasRenderableGeometry(ltdfFindActionButton())) return false;
     try { ltdfActivateNativeTurbo(source || "tick"); } catch (_) {}
     try { ltdfClickActionWhenReady(source || "tick"); } catch (_) {}
     return true;
@@ -2240,6 +2255,7 @@ window.setSpeedConfig = function(val) {
 
   function ltdfScheduleNativeAutomationTick(source, delay) {
     if (!window.__ltdfNativeAutomationReady) return;
+    if (!ltdfHasRenderableGeometry(ltdfFindActionButton())) return;
     if (window.__ltdfNativeAutomationTickPending) return;
     window.__ltdfNativeAutomationTickPending = true;
     nativeClock.setTimeout(() => {
@@ -4328,7 +4344,7 @@ class BrowserRunner:
         applied = 0
         for profile_id, driver, runtime, site in targets:
             try:
-                if not runtime.lock.acquire(timeout=0.5):
+                if not runtime.lock.acquire(blocking=False):
                     self._log(f"[{runtime.profile_name}] Speed HTML5 ignorado: driver ocupado nesta aba.", level="WARN")
                     continue
                 try:
@@ -4339,6 +4355,10 @@ class BrowserRunner:
                         previous_handle = None
                     if site.handle:
                         self._switch_to_handle(driver, site.handle)
+                    try:
+                        driver.set_script_timeout(3)
+                    except Exception:
+                        pass
                     self._apply_html5_speed_on_driver(driver, config)
                     if previous_handle:
                         self._switch_to_handle(driver, previous_handle)
@@ -8008,12 +8028,12 @@ class LTDFSingleFileApp(ctk.CTk):
             if getattr(self, "_speed_apply_running", False):
                 started_at = float(getattr(self, "_speed_apply_started_at", 0) or 0)
                 if time.time() - started_at < 8:
-                    self.add_log("Speed HTML5: aplicacao anterior ainda em andamento; aguarde finalizar antes de enviar outra.", "WARN")
-                    self._sync_speed_controls()
-                    return
-                self.add_log("Speed HTML5: liberando aplicacao anterior presa por timeout.", "WARN")
+                    self.add_log("Speed HTML5: aplicacao anterior ainda em andamento; enviando nova configuracao em paralelo.", "WARN")
+                else:
+                    self.add_log("Speed HTML5: liberando aplicacao anterior presa por timeout.", "WARN")
             self._speed_apply_running = True
-            self._speed_apply_started_at = time.time()
+            apply_token = time.time()
+            self._speed_apply_started_at = apply_token
             self.add_log(f"Speed HTML5 stress solicitado em {config.get('speed', 1.0):.2f}x; aplicando em segundo plano.", "INFO")
         except Exception as exc:
             self.add_log(f"Speed HTML5 falhou antes de iniciar worker: {exc}", "ERROR")
@@ -8034,17 +8054,18 @@ class LTDFSingleFileApp(ctk.CTk):
                 self.browser_runner.apply_html5_speed_config(config)
                 url = f"http://127.0.0.1:{self.relay_config.port}/speed_config"
                 payload = {"config": config}
-                response = requests.post(url, json=payload, timeout=2)
+                response = requests.post(url, json=payload, timeout=0.75)
                 response.raise_for_status()
                 status = "ativado" if config.get("enabled") else "desativado"
                 ui_log(f"Speed HTML5 stress {status} em {config.get('speed', 1.0):.2f}x aplicado via relay.", "INFO")
             except Exception as exc:
                 ui_log(f"Falha ao propagar speed HTML5 via relay: {exc}", "WARN")
             finally:
-                self._speed_apply_running = False
-                self._speed_apply_started_at = 0
+                if float(getattr(self, "_speed_apply_started_at", 0) or 0) == apply_token:
+                    self._speed_apply_running = False
+                    self._speed_apply_started_at = 0
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=worker, name="ltdf-speed-apply", daemon=True).start()
         self._sync_speed_controls()
 
     def apply_saved_proxies_to_selected(self) -> None:
