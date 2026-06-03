@@ -1717,6 +1717,8 @@ window.setSpeedConfig = function(val) {
     rafProxyInstalled: false,
     rafProxyReapplyCount: 0,
     timeProxyInstalled: false,
+    workerProxyInstalled: false,
+    wasmProxyInstalled: false,
   };
 
   const nativeClock = window.__ltdfNativeClock || {
@@ -1849,6 +1851,144 @@ window.setSpeedConfig = function(val) {
     }
   }
 
+  const workerBootstrap = `
+(function () {
+  if (self.__ltdfWorkerSpeedInstalled) return;
+  self.__ltdfWorkerSpeedInstalled = true;
+  self._ltdfSpeedConfig = ${JSON.stringify(window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || { enabled:false, speed:1.0 })};
+  const normalizeConfig = (config) => {
+    const speed = Math.max(0.1, Math.min(4, Number(config && config.speed || 1) || 1));
+    return {
+      enabled: !!(config && config.enabled),
+      speed,
+      cbSetIntervalChecked: !config || config.cbSetIntervalChecked !== false,
+      cbSetTimeoutChecked: !config || config.cbSetTimeoutChecked !== false,
+      cbPerformanceNowChecked: !config || config.cbPerformanceNowChecked !== false,
+      cbDateNowChecked: !config || config.cbDateNowChecked !== false,
+    };
+  };
+  const nativeClock = {
+    performanceNow: self.performance && typeof self.performance.now === "function" ? self.performance.now.bind(self.performance) : null,
+    dateNow: typeof Date.now === "function" ? Date.now.bind(Date) : null,
+    setTimeout: typeof self.setTimeout === "function" ? self.setTimeout.bind(self) : null,
+    setInterval: typeof self.setInterval === "function" ? self.setInterval.bind(self) : null,
+  };
+  const realNow = () => nativeClock.performanceNow ? nativeClock.performanceNow() : (nativeClock.dateNow ? nativeClock.dateNow() : Date.now());
+  const effectiveSpeed = (flagName) => {
+    const cfg = normalizeConfig(self._ltdfSpeedConfig || {});
+    if (!cfg.enabled || cfg.speed <= 1.0 || cfg[flagName] === false) return 1.0;
+    return cfg.speed;
+  };
+  const origin = { perfReal: realNow(), perfVirtual: realNow(), dateReal: nativeClock.dateNow ? nativeClock.dateNow() : Date.now(), dateVirtual: nativeClock.dateNow ? nativeClock.dateNow() : Date.now() };
+  const acceleratedPerfNow = () => {
+    const speed = effectiveSpeed("cbPerformanceNowChecked");
+    const current = realNow();
+    return speed > 1.0 ? origin.perfVirtual + ((current - origin.perfReal) * speed) : current;
+  };
+  const acceleratedDateNow = () => {
+    const speed = effectiveSpeed("cbDateNowChecked");
+    const current = nativeClock.dateNow ? nativeClock.dateNow() : Math.floor(realNow());
+    return Math.floor(speed > 1.0 ? origin.dateVirtual + ((current - origin.dateReal) * speed) : current);
+  };
+  const scaledDelay = (delay, flagName) => {
+    const ms = Math.max(0, Number(delay || 0) || 0);
+    const speed = effectiveSpeed(flagName);
+    return speed > 1.0 ? Math.max(0, ms / speed) : ms;
+  };
+  try { Object.defineProperty(self.performance, "now", { configurable:true, writable:true, value:acceleratedPerfNow }); } catch (_) { try { self.performance.now = acceleratedPerfNow; } catch (_) {} }
+  try { Date.now = acceleratedDateNow; } catch (_) {}
+  if (nativeClock.setTimeout) self.setTimeout = function(handler, timeout, ...args) { return nativeClock.setTimeout(handler, scaledDelay(timeout, "cbSetTimeoutChecked"), ...args); };
+  if (nativeClock.setInterval) self.setInterval = function(handler, timeout, ...args) { return nativeClock.setInterval(handler, scaledDelay(timeout, "cbSetIntervalChecked"), ...args); };
+  self.addEventListener("message", (event) => {
+    if (event && event.data && event.data.__ltdfSpeedWorkerConfig) self._ltdfSpeedConfig = event.data.config || self._ltdfSpeedConfig;
+  });
+})();`;
+
+  function installWorkerProxy(source) {
+    try {
+      if (window.__ltdfNativeWorker || typeof window.Worker !== "function") return true;
+      window.__ltdfNativeWorker = window.Worker;
+      window.Worker = new Proxy(window.__ltdfNativeWorker, {
+        construct(target, args) {
+          try {
+            const workerUrl = args[0];
+            const options = args[1];
+            const resolvedWorkerUrl = new URL(String(workerUrl), location.href).href;
+            const isModuleWorker = options && String(options.type || "").toLowerCase() === "module";
+            const sourceCode = isModuleWorker
+              ? `${workerBootstrap}\nimport ${JSON.stringify(resolvedWorkerUrl)};`
+              : `${workerBootstrap}\ntry { importScripts(${JSON.stringify(resolvedWorkerUrl)}); } catch (error) { throw error; }`;
+            const blob = new Blob([sourceCode], { type: "application/javascript" });
+            const blobUrl = URL.createObjectURL(blob);
+            const worker = options === undefined ? Reflect.construct(target, [blobUrl]) : Reflect.construct(target, [blobUrl, options]);
+            try { worker.postMessage({ __ltdfSpeedWorkerConfig: true, config: window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || {} }); } catch (_) {}
+            nativeClock.setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 30000);
+            return worker;
+          } catch (_) {
+            const worker = Reflect.construct(target, args);
+            try { worker.postMessage({ __ltdfSpeedWorkerConfig: true, config: window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || {} }); } catch (_) {}
+            return worker;
+          }
+        },
+      });
+      window.__ltdfSpeedDebug.workerProxyInstalled = true;
+      window.__ltdfSpeedDebug.workerProxySource = source || "install";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function patchWasmImports(imports) {
+    try {
+      if (!imports || typeof imports !== "object") return imports;
+      const patched = Array.isArray(imports) ? imports.slice() : { ...imports };
+      for (const namespaceKey of Object.keys(patched)) {
+        const namespace = patched[namespaceKey];
+        if (!namespace || typeof namespace !== "object") continue;
+        const namespaceCopy = { ...namespace };
+        for (const key of Object.keys(namespaceCopy)) {
+          if (typeof namespaceCopy[key] !== "function") continue;
+          const label = `${namespaceKey}.${key}`.toLowerCase();
+          if (/(now|time|date|clock|timestamp|performance)/.test(label)) {
+            namespaceCopy[key] = function(...args) {
+              const value = /date|unix|epoch|timestamp/.test(label) ? acceleratedDateNow() : acceleratedPerfNow();
+              return Number.isInteger(value) ? value : +value;
+            };
+          }
+        }
+        patched[namespaceKey] = namespaceCopy;
+      }
+      return patched;
+    } catch (_) {
+      return imports;
+    }
+  }
+
+  function installWasmProxy(source) {
+    try {
+      if (!window.WebAssembly || window.__ltdfWasmProxyInstalled) return true;
+      const nativeInstantiate = WebAssembly.instantiate ? WebAssembly.instantiate.bind(WebAssembly) : null;
+      const nativeInstantiateStreaming = WebAssembly.instantiateStreaming ? WebAssembly.instantiateStreaming.bind(WebAssembly) : null;
+      if (nativeInstantiate) {
+        WebAssembly.instantiate = function(moduleOrBytes, imports) {
+          return nativeInstantiate(moduleOrBytes, patchWasmImports(imports));
+        };
+      }
+      if (nativeInstantiateStreaming) {
+        WebAssembly.instantiateStreaming = function(sourcePromise, imports) {
+          return nativeInstantiateStreaming(sourcePromise, patchWasmImports(imports));
+        };
+      }
+      window.__ltdfWasmProxyInstalled = true;
+      window.__ltdfSpeedDebug.wasmProxyInstalled = true;
+      window.__ltdfSpeedDebug.wasmProxySource = source || "install";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
     rebaseTimeOrigin();
@@ -1856,6 +1996,8 @@ window.setSpeedConfig = function(val) {
     window.setSpeedConfig(next.enabled ? next.speed : 1.0);
     installTimeProxies(source || "apply");
     installRafProxy(source || "apply");
+    installWorkerProxy(source || "apply");
+    installWasmProxy(source || "apply");
     window.__ltdfSpeedDebug.ready = window._ltdfReady;
     window.__ltdfSpeedDebug.speed = window._ltdfSpeed;
     window.__ltdfSpeedDebug.targetSpeed = window._ltdfTargetSpeed;
@@ -1881,6 +2023,8 @@ window.setSpeedConfig = function(val) {
       }
       installTimeProxies(source || "late_reapply");
       installRafProxy(source || "late_reapply");
+      installWorkerProxy(source || "late_reapply");
+      installWasmProxy(source || "late_reapply");
     } catch (_) {}
   }
 
