@@ -182,8 +182,8 @@ class WorkspaceData(BaseModel):
     master_urls: list[str] = Field(default_factory=list)
     child_urls: list[str] = Field(default_factory=list)
     completed_links: list[str] = Field(default_factory=list)
-    html5_speed_enabled: bool = False
-    html5_speed: float = 1.0
+    html5_speed_enabled: bool = True
+    html5_speed: float = 4.0
 
 
 class LogEvent(BaseModel):
@@ -220,8 +220,8 @@ class AccountCapturedEvent(BaseModel):
 
 
 DEFAULT_HTML5_SPEED_CONFIG = {
-    "enabled": False,
-    "speed": 1.0,
+    "enabled": True,
+    "speed": 4.0,
     "cbSetIntervalChecked": True,
     "cbSetTimeoutChecked": True,
     "cbPerformanceNowChecked": True,
@@ -229,17 +229,19 @@ DEFAULT_HTML5_SPEED_CONFIG = {
     "cbRequestAnimationFrameChecked": True,
 }
 HTML5_SPEED_MAX_MULTIPLIER = 4.0
-HTML5_SPEED_ARCHIVED = True
-HTML5_SPEED_ARCHIVE_REASON = "Server-Side Tick Rate: modulo de aceleracao encerrado; manter apenas limpeza anti-freeze."
+HTML5_SPEED_ARCHIVED = False
+HTML5_SPEED_ARCHIVE_REASON = "Stress test mode: Speed HTML5 reativado para validacao controlada."
 
 
 def build_html5_speed_config(data: WorkspaceData | None) -> dict:
     current = data or WorkspaceData()
-    speed = max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, float(getattr(current, "html5_speed", 1.0) or 1.0)))
+    speed = max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, float(getattr(current, "html5_speed", HTML5_SPEED_MAX_MULTIPLIER) or HTML5_SPEED_MAX_MULTIPLIER)))
+    if speed <= 1.05:
+        speed = HTML5_SPEED_MAX_MULTIPLIER
     if HTML5_SPEED_ARCHIVED:
         speed = 1.0
     return {
-        "enabled": False if HTML5_SPEED_ARCHIVED else bool(getattr(current, "html5_speed_enabled", False)),
+        "enabled": False if HTML5_SPEED_ARCHIVED else True,
         "speed": speed,
         "cbSetIntervalChecked": True,
         "cbSetTimeoutChecked": True,
@@ -252,11 +254,13 @@ def build_html5_speed_config(data: WorkspaceData | None) -> dict:
 def normalize_speed_config_for_cdp(config: dict | None) -> dict:
     config = config or {}
     try:
-        speed = float(config.get("speed", 1.0) or 1.0)
+        speed = float(config.get("speed", HTML5_SPEED_MAX_MULTIPLIER) or HTML5_SPEED_MAX_MULTIPLIER)
     except Exception:
-        speed = 1.0
+        speed = HTML5_SPEED_MAX_MULTIPLIER
+    if speed <= 1.05:
+        speed = HTML5_SPEED_MAX_MULTIPLIER
     return {
-        "enabled": False if HTML5_SPEED_ARCHIVED else bool(config.get("enabled", False)),
+        "enabled": False if HTML5_SPEED_ARCHIVED else True,
         "speed": 1.0 if HTML5_SPEED_ARCHIVED else max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, speed)),
         "cbSetIntervalChecked": config.get("cbSetIntervalChecked") is not False,
         "cbSetTimeoutChecked": config.get("cbSetTimeoutChecked") is not False,
@@ -6270,6 +6274,36 @@ class BrowserRunner:
             "content_scripts": [
                 {
                     "matches": ["<all_urls>"],
+                    "js": ["speed.js"],
+                    "run_at": "document_start",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                    "world": "MAIN",
+                },
+                {
+                    "matches": ["<all_urls>"],
+                    "js": ["speed_injector.js"],
+                    "run_at": "document_start",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                },
+                {
+                    "matches": ["<all_urls>"],
+                    "js": ["speed_late.js"],
+                    "run_at": "document_end",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                    "world": "MAIN",
+                },
+                {
+                    "matches": ["<all_urls>"],
+                    "js": ["speed_bridge.js"],
+                    "run_at": "document_start",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                },
+                {
+                    "matches": ["<all_urls>"],
                     "js": ["panel.js"],
                     "run_at": "document_end",
                     "all_frames": False,
@@ -6290,22 +6324,74 @@ class BrowserRunner:
             .replace("__SPEED_HACK_PAGE_SCRIPT__", json.dumps(SPEED_HACK_PAGE_SCRIPT, ensure_ascii=False))
         )
         speed_js = (
-            "window.__LTDF_SPEED_ARCHIVED__ = true;\n"
-            "window.__LTDF_SPEED_ARCHIVE_REASON__ = "
-            + json.dumps(HTML5_SPEED_ARCHIVE_REASON, ensure_ascii=False)
+            "window.__ltdfSpeedInitialConfig = "
+            + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
             + ";\n"
-            "try { if (typeof window.__LTDF_TURBO_DESTROY__ === 'function') window.__LTDF_TURBO_DESTROY__('archived_stub'); } catch (_) {}\n"
-            "//# sourceURL=ltdf_speed_archived.js"
+            + SPEED_HACK_PAGE_SCRIPT
         )
         speed_injector_js = (
-            "window.__LTDF_SPEED_ARCHIVED__ = true;\n"
-            "// Speed injector arquivado: nenhuma injecao automatica.\n"
-            "//# sourceURL=ltdf_speed_injector_archived.js"
+            "const LTDF_SPEED_BOOTSTRAP = "
+            + json.dumps(
+                "window.__ltdfSpeedInitialConfig = "
+                + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
+                + ";\n"
+                + SPEED_HACK_PAGE_SCRIPT
+                + "\n//# sourceURL=ltdf_speed_mainworld_fallback.js",
+                ensure_ascii=False,
+            )
+            + ";\n"
+            + """
+(function () {
+  if (window.__ltdfSpeedMainWorldTagRequested) return;
+  window.__ltdfSpeedMainWorldTagRequested = true;
+  function injectMainWorld() {
+    try {
+      const target = document.head || document.documentElement || document.body;
+      if (!target) return false;
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.dataset.ltdfSpeedFallback = 'main-world';
+      script.textContent = LTDF_SPEED_BOOTSTRAP;
+      target.appendChild(script);
+      script.remove();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  if (injectMainWorld()) return;
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectMainWorld, { once: true });
+  }
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    if (injectMainWorld() || Date.now() - startedAt > 3000) clearInterval(timer);
+  }, 50);
+})();
+//# sourceURL=ltdf_speed_injector.js
+            """.strip()
         )
         speed_late_js = (
-            "window.__LTDF_SPEED_ARCHIVED__ = true;\n"
-            "// Speed late arquivado: limpeza sob demanda pelo backend.\n"
-            "//# sourceURL=ltdf_speed_late_archived.js"
+            "window.__ltdfSpeedInitialConfig = "
+            + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
+            + ";\n"
+            + """
+(function () {
+  const cfg = window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || { enabled:false, speed:1.0 };
+  if (typeof window.__ltdfForceSpeedReapply === 'function') {
+    window.__ltdfForceSpeedReapply('document_end_content_script');
+    return;
+  }
+  if (typeof window.__ltdfApplySpeedConfig === 'function') {
+    window.__ltdfApplySpeedConfig(cfg, 'document_end_content_script');
+    return;
+  }
+  window._ltdfSpeedConfig = cfg;
+  window._ltdfSpeed = cfg && cfg.enabled ? Number(cfg.speed || 1) || 1 : 1.0;
+  window._ltdfTargetSpeed = window._ltdfSpeed;
+})();
+//# sourceURL=ltdf_speed_late.js
+            """.strip()
         )
         speed_bridge_js = SPEED_BRIDGE_JS.replace(
             "__DEFAULT_SPEED_CONFIG__",
@@ -7490,16 +7576,16 @@ class LTDFSingleFileApp(ctk.CTk):
         quick_speed = ctk.CTkFrame(controls, fg_color="#0f1822", border_width=1, border_color=C_BORDER)
         quick_speed.grid(row=1, column=0, columnspan=9, sticky="ew", pady=(10, 0))
         quick_speed.grid_columnconfigure(4, weight=1)
-        ctk.CTkLabel(quick_speed, text="SPEED ARQUIVADO", text_color=C_ACCENT, font=(FONT_MONO, 12, "bold")).grid(row=0, column=0, padx=(10, 8), pady=8, sticky="w")
-        self.quick_speed_enabled_var = ctk.BooleanVar(value=False)
+        ctk.CTkLabel(quick_speed, text="HTML5 SPEED", text_color=C_ACCENT, font=(FONT_MONO, 12, "bold")).grid(row=0, column=0, padx=(10, 8), pady=8, sticky="w")
+        self.quick_speed_enabled_var = ctk.BooleanVar(value=True)
         self.quick_speed_switch = ctk.CTkSwitch(
             quick_speed,
-            text="LIMPEZA",
+            text="ATIVO",
             variable=self.quick_speed_enabled_var,
             command=self._toggle_html5_speed_quick,
         )
         self.quick_speed_switch.grid(row=0, column=1, padx=(0, 8), pady=8, sticky="w")
-        self.quick_speed_choice_var = ctk.StringVar(value="1x")
+        self.quick_speed_choice_var = ctk.StringVar(value="4x")
         self.quick_speed_menu = ctk.CTkOptionMenu(
             quick_speed,
             values=["0.5x", "1x", "2x", "3x", "4x", "Custom"],
@@ -7513,7 +7599,7 @@ class LTDFSingleFileApp(ctk.CTk):
         self.quick_speed_status_label.grid(row=0, column=3, padx=(0, 8), pady=8, sticky="w")
         ctk.CTkButton(
             quick_speed,
-            text="LIMPAR SPEED",
+            text="APLICAR SPEED",
             fg_color=C_ACCENT,
             text_color="#00140c",
             command=self.apply_html5_speed_from_ui,
@@ -7590,11 +7676,11 @@ class LTDFSingleFileApp(ctk.CTk):
         speed.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         speed.grid_columnconfigure(0, weight=1)
         speed.grid_columnconfigure(1, weight=0)
-        ctk.CTkLabel(speed, text="HTML5 SPEED ARQUIVADO", text_color=C_ACCENT, font=(FONT_MONO, 13, "bold")).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
-        self.html5_speed_enabled_var = ctk.BooleanVar(value=False)
+        ctk.CTkLabel(speed, text="HTML5 SPEED HACK", text_color=C_ACCENT, font=(FONT_MONO, 13, "bold")).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
+        self.html5_speed_enabled_var = ctk.BooleanVar(value=True)
         ctk.CTkSwitch(
             speed,
-            text="Executar limpeza anti-freeze do modulo arquivado",
+            text="Ativar speed hack em games HTML5",
             variable=self.html5_speed_enabled_var,
             command=self._toggle_html5_speed_home,
         ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 8))
@@ -7604,15 +7690,15 @@ class LTDFSingleFileApp(ctk.CTk):
         self.html5_speed_slider.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 8))
         ctk.CTkLabel(
             speed,
-            text="Diagnostico fechado: Server-Side Tick Rate. O modulo agora apenas limpa residuos anti-freeze.",
+            text="Modo teste de estresse: aplica velocidade nas abas abertas e nas proximas abas carregadas pela extensao LTDF.",
             text_color=C_MUTED,
             font=(FONT_MONO, 11),
             justify="left",
         ).grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
         speed_actions = ctk.CTkFrame(speed, fg_color="transparent")
         speed_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 12))
-        ctk.CTkButton(speed_actions, text="LIMPAR AGORA", fg_color=C_ACCENT, text_color="#00140c", command=self.apply_html5_speed_from_ui).pack(side="left")
-        ctk.CTkButton(speed_actions, text="SALVAR 1X", fg_color="#193246", command=self.save_workspace_preferences).pack(side="left", padx=8)
+        ctk.CTkButton(speed_actions, text="APLICAR AGORA", fg_color=C_ACCENT, text_color="#00140c", command=self.apply_html5_speed_from_ui).pack(side="left")
+        ctk.CTkButton(speed_actions, text="SALVAR VELOCIDADE", fg_color="#193246", command=self.save_workspace_preferences).pack(side="left", padx=8)
 
     def _build_pix_tab(self, tab) -> None:
         tab.grid_rowconfigure(1, weight=1)
@@ -7815,20 +7901,6 @@ class LTDFSingleFileApp(ctk.CTk):
         self.browser_runner.set_workspace_data(self.workspace_data)
 
     def _on_html5_speed_slider_changed(self, value) -> None:
-        if HTML5_SPEED_ARCHIVED:
-            speed = 1.0
-            if hasattr(self, "html5_speed_slider"):
-                try:
-                    self.html5_speed_slider.set(1.0)
-                except Exception:
-                    pass
-            if hasattr(self, "html5_speed_value_label"):
-                self.html5_speed_value_label.configure(text="1.00x")
-            if hasattr(self, "quick_speed_status_label"):
-                self.quick_speed_status_label.configure(text="ARQUIVADO")
-            if hasattr(self, "quick_speed_choice_var"):
-                self.quick_speed_choice_var.set("1x")
-            return
         try:
             speed = float(value)
         except Exception:
@@ -7864,30 +7936,20 @@ class LTDFSingleFileApp(ctk.CTk):
         return mapping.get(choice)
 
     def _sync_speed_controls(self) -> None:
-        if HTML5_SPEED_ARCHIVED:
-            enabled = False
-            speed = 1.0
-            if hasattr(self, "html5_speed_enabled_var"):
-                self.html5_speed_enabled_var.set(False)
-            if hasattr(self, "quick_speed_enabled_var"):
-                self.quick_speed_enabled_var.set(False)
-            if hasattr(self, "html5_speed_slider"):
-                try:
-                    self.html5_speed_slider.set(1.0)
-                except Exception:
-                    pass
-            if hasattr(self, "html5_speed_value_label"):
-                self.html5_speed_value_label.configure(text="1.00x")
-            if hasattr(self, "quick_speed_status_label"):
-                self.quick_speed_status_label.configure(text="ARQUIVADO")
-            if hasattr(self, "quick_speed_choice_var"):
-                self.quick_speed_choice_var.set("1x")
-            return
-        enabled = bool(self.html5_speed_enabled_var.get()) if hasattr(self, "html5_speed_enabled_var") else bool(self.workspace_data.html5_speed_enabled)
+        enabled = True if not HTML5_SPEED_ARCHIVED else False
         try:
             speed = float(self.html5_speed_slider.get()) if hasattr(self, "html5_speed_slider") else float(self.workspace_data.html5_speed or 1.0)
         except Exception:
-            speed = 1.0
+            speed = HTML5_SPEED_MAX_MULTIPLIER
+        if speed <= 1.05 and not HTML5_SPEED_ARCHIVED:
+            speed = HTML5_SPEED_MAX_MULTIPLIER
+            if hasattr(self, "html5_speed_slider"):
+                try:
+                    self.html5_speed_slider.set(speed)
+                except Exception:
+                    pass
+        if hasattr(self, "html5_speed_enabled_var"):
+            self.html5_speed_enabled_var.set(enabled)
         if hasattr(self, "quick_speed_enabled_var"):
             self.quick_speed_enabled_var.set(enabled)
         if hasattr(self, "quick_speed_status_label"):
@@ -7917,10 +7979,16 @@ class LTDFSingleFileApp(ctk.CTk):
 
     def apply_html5_speed_from_ui(self) -> None:
         try:
-            self.add_log("Speed HTML5 arquivado: comando de limpeza anti-freeze recebido.", "INFO")
+            self.add_log("Speed HTML5: comando de teste de estresse recebido pelo painel.", "INFO")
             self.save_workspace_preferences()
-            selected_speed = 1.0
-            selected_enabled = False
+            try:
+                selected_speed = float(self.html5_speed_slider.get()) if hasattr(self, "html5_speed_slider") else float(self.workspace_data.html5_speed or HTML5_SPEED_MAX_MULTIPLIER)
+            except Exception:
+                selected_speed = HTML5_SPEED_MAX_MULTIPLIER
+            selected_speed = max(0.1, min(HTML5_SPEED_MAX_MULTIPLIER, selected_speed))
+            if selected_speed <= 1.05:
+                selected_speed = HTML5_SPEED_MAX_MULTIPLIER
+            selected_enabled = True
             if hasattr(self, "html5_speed_enabled_var"):
                 self.html5_speed_enabled_var.set(selected_enabled)
             if hasattr(self, "quick_speed_enabled_var"):
@@ -7934,7 +8002,7 @@ class LTDFSingleFileApp(ctk.CTk):
             self.browser_runner.set_workspace_data(self.workspace_data)
             config = build_html5_speed_config(self.workspace_data)
             self.add_log(
-                f"Speed HTML5 arquivado: enabled={config.get('enabled')} speed={config.get('speed', 1.0):.2f}x; motivo={HTML5_SPEED_ARCHIVE_REASON}",
+                f"Speed HTML5 stress config: enabled={config.get('enabled')} speed={config.get('speed', 1.0):.2f}x",
                 "INFO",
             )
             if getattr(self, "_speed_apply_running", False):
@@ -7946,7 +8014,7 @@ class LTDFSingleFileApp(ctk.CTk):
                 self.add_log("Speed HTML5: liberando aplicacao anterior presa por timeout.", "WARN")
             self._speed_apply_running = True
             self._speed_apply_started_at = time.time()
-            self.add_log("Speed HTML5 arquivado: executando limpeza em segundo plano.", "INFO")
+            self.add_log(f"Speed HTML5 stress solicitado em {config.get('speed', 1.0):.2f}x; aplicando em segundo plano.", "INFO")
         except Exception as exc:
             self.add_log(f"Speed HTML5 falhou antes de iniciar worker: {exc}", "ERROR")
             try:
@@ -7968,7 +8036,8 @@ class LTDFSingleFileApp(ctk.CTk):
                 payload = {"config": config}
                 response = requests.post(url, json=payload, timeout=2)
                 response.raise_for_status()
-                ui_log("Speed HTML5 arquivado: limpeza anti-freeze propagada via relay.", "INFO")
+                status = "ativado" if config.get("enabled") else "desativado"
+                ui_log(f"Speed HTML5 stress {status} em {config.get('speed', 1.0):.2f}x aplicado via relay.", "INFO")
             except Exception as exc:
                 ui_log(f"Falha ao propagar speed HTML5 via relay: {exc}", "WARN")
             finally:

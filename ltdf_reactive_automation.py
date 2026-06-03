@@ -35,7 +35,7 @@ class LTDFReactiveConfig:
     loading_poll_ms: int = 800
     observer_cooldown_ms: int = 40
     watchdog_interval_ms: int = 2500
-    click_burst: int = 1
+    click_burst: int = 3
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
 
