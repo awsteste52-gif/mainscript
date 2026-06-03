@@ -2011,11 +2011,13 @@ function registerSession() {
 }
 
 function sendHeartbeat() {
+    const speed = Math.max(1, Number(_speedConfig?.speed || 1) || 1);
     return sendWS({
         action: 'heartbeat',
         domain: 'extension-background',
         role: ROLE_MODE === 'slave_only' ? 'slave' : 'master',
         activeUrl: _activeWsUrl,
+        speed,
         ts: Date.now(),
     }).catch(() => {});
 }
@@ -2093,6 +2095,20 @@ function connect(force = false) {
     ws.onmessage = (e) => {
         try {
             const data = JSON.parse(e.data);
+            if (data && data.action === 'heartbeat_ack') {
+                const clientTs = Number(data.client_ts || 0);
+                const rttMs = clientTs ? Math.max(0, Date.now() - clientTs) : 0;
+                const speed = Math.max(1, Number(_speedConfig?.speed || data.speed || 1) || 1);
+                const tickBudgetMs = Math.max(16, Math.round(1000 / speed));
+                if (rttMs > tickBudgetMs) {
+                    broadcastTabs({
+                        action: 'bg_debug',
+                        level: 'warn',
+                        msg: `Proxy RTT alto: ${rttMs}ms > tick ${tickBudgetMs}ms em ${speed.toFixed(2)}x`,
+                    });
+                }
+                return;
+            }
             if (data && data.action === 'speed_config_update') {
                 _speedConfig = normalizeSpeedConfig(data.config || {});
                 chrome.storage.local.set({ ltdf_speed_config: _speedConfig }, () => {});
@@ -3027,6 +3043,18 @@ class RelayService:
                     action = str(data.get("action") or "")
                     if action == "register_session":
                         self._emit(LogEvent(level="INFO", message=f"relay register_session session={session_id} conexoes={connection_count}", source="relay"))
+                    if action == "heartbeat":
+                        try:
+                            await websocket.send_text(json.dumps({
+                                "action": "heartbeat_ack",
+                                "session_id": session_id,
+                                "client_ts": data.get("ts"),
+                                "server_ts": int(time.time() * 1000),
+                                "speed": data.get("speed"),
+                            }))
+                        except Exception:
+                            pass
+                        continue
                     elif action.startswith("mirror_"):
                         self._emit(LogEvent(level="INFO", message=f"relay recv {action} session={session_id} conexoes={connection_count}", source="relay"))
                     await self._broadcast(session_id, data, sender=websocket)
@@ -6003,6 +6031,7 @@ class BrowserRunner:
                     "--disable-popup-blocking",
                     "--disable-dev-shm-usage",
                     "--disable-background-networking",
+                    "--disable-background-timer-throttling",
                     "--disable-backgrounding-occluded-windows",
                     "--disable-client-side-phishing-detection",
                     "--disable-default-apps",
