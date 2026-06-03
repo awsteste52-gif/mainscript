@@ -3753,23 +3753,17 @@ class BrowserRunner:
         height = float(rect.get("height") or 0)
         left = float(rect.get("x") or 0)
         top = float(rect.get("y") or 0)
-        minus_points = [
-            (left + (width * 0.41), top + (height * 0.905)),
-            (left + (width * 0.46), top + (height * 0.905)),
-            (left + (width * 0.38), top + (height * 0.885)),
-        ]
-        plus_points = [
-            (left + (width * 0.93), top + (height * 0.905)),
-            (left + (width * 0.88), top + (height * 0.905)),
-            (left + (width * 0.95), top + (height * 0.885)),
-            (left + (width * 0.90), top + (height * 0.930)),
-        ]
+        scan_y = (0.80, 0.82, 0.85, 0.885, 0.905, 0.93)
+        minus_x = (0.38, 0.41, 0.46)
+        plus_x = (0.88, 0.90, 0.93, 0.95)
+        minus_points = [(left + (width * x_ratio), top + (height * y_ratio)) for y_ratio in scan_y for x_ratio in minus_x]
+        plus_points = [(left + (width * x_ratio), top + (height * y_ratio)) for y_ratio in scan_y for x_ratio in plus_x]
         return minus_points, plus_points
 
     def _fire_game_speed_clicks(self, driver: webdriver.Chrome, minus_points: list[tuple[float, float]], plus_points: list[tuple[float, float]], target_steps: int) -> int:
         def js_click(x: float, y: float) -> None:
             self._dispatch_js_click_on_driver(driver, x, y)
-            time.sleep(0.06)
+            time.sleep(0.025)
 
         for _ in range(4):
             for point in minus_points:
@@ -5719,6 +5713,7 @@ class BrowserRunner:
                     "--no-first-run",
                     f"--load-extension={','.join(extension_paths)}",
                     f"--proxy-bypass-list={proxy_bypass}",
+                    "--disable-features=IsolateOrigins,site-per-process",
                     "--disable-features=IsolateOrigins,site-per-process,TranslateUI,OptimizationHints,MediaRouter,AutofillServerCommunication,PasswordManagerEnabled",
                     "--disable-site-isolation-trials",
                     "--allow-running-insecure-content",
