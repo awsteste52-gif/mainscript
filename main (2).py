@@ -5540,6 +5540,13 @@ class BrowserRunner:
                 },
                 {
                     "matches": ["<all_urls>"],
+                    "js": ["speed_injector.js"],
+                    "run_at": "document_start",
+                    "all_frames": True,
+                    "match_about_blank": True,
+                },
+                {
+                    "matches": ["<all_urls>"],
                     "js": ["speed_late.js"],
                     "run_at": "document_end",
                     "all_frames": True,
@@ -5580,6 +5587,48 @@ class BrowserRunner:
             + ";\n"
             + SPEED_HACK_PAGE_SCRIPT
         )
+        speed_injector_js = (
+            "const LTDF_SPEED_BOOTSTRAP = "
+            + json.dumps(
+                "window.__ltdfSpeedInitialConfig = "
+                + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
+                + ";\n"
+                + SPEED_HACK_PAGE_SCRIPT
+                + "\n//# sourceURL=ltdf_speed_mainworld_fallback.js",
+                ensure_ascii=False,
+            )
+            + ";\n"
+            + """
+(function () {
+  if (window.__ltdfSpeedMainWorldTagRequested) return;
+  window.__ltdfSpeedMainWorldTagRequested = true;
+  function injectMainWorld() {
+    try {
+      const target = document.head || document.documentElement || document.body;
+      if (!target) return false;
+      const script = document.createElement('script');
+      script.type = 'text/javascript';
+      script.dataset.ltdfSpeedFallback = 'main-world';
+      script.textContent = LTDF_SPEED_BOOTSTRAP;
+      target.appendChild(script);
+      script.remove();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  if (injectMainWorld()) return;
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectMainWorld, { once: true });
+  }
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    if (injectMainWorld() || Date.now() - startedAt > 3000) clearInterval(timer);
+  }, 50);
+})();
+//# sourceURL=ltdf_speed_injector.js
+            """.strip()
+        )
         speed_late_js = (
             "window.__ltdfSpeedInitialConfig = "
             + json.dumps(build_html5_speed_config(self.workspace_data), ensure_ascii=False)
@@ -5609,6 +5658,7 @@ class BrowserRunner:
         (extension_dir / "background.js").write_text(background_js, encoding="utf-8")
         (extension_dir / "panel.js").write_text(panel_js, encoding="utf-8")
         (extension_dir / "speed.js").write_text(speed_js, encoding="utf-8")
+        (extension_dir / "speed_injector.js").write_text(speed_injector_js, encoding="utf-8")
         (extension_dir / "speed_late.js").write_text(speed_late_js, encoding="utf-8")
         (extension_dir / "speed_bridge.js").write_text(speed_bridge_js, encoding="utf-8")
         logger.info(
