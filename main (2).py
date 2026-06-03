@@ -79,6 +79,7 @@ import uvicorn
 from pydantic import BaseModel, Field
 from screeninfo import get_monitors
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
@@ -5218,6 +5219,15 @@ class BrowserRunner:
         else:
             self._apply_site_mobile_view(driver)
 
+    def _focus_game_iframe_after_load(self, driver: webdriver.Chrome) -> None:
+        time.sleep(6)
+        try:
+            iframe_jogo = driver.find_element(By.TAG_NAME, "iframe")
+            driver.switch_to.frame(iframe_jogo)
+            print("Foco alterado para o iframe do jogo com sucesso!")
+        except Exception as e:
+            print(f"Aviso: Nao encontrou iframe na pagina principal, rodando no contexto atual. {e}")
+
     def _open_site_window(
         self,
         driver: webdriver.Chrome,
@@ -5241,6 +5251,7 @@ class BrowserRunner:
         self._install_hush_plus_cdp_hooks(driver)
         try:
             driver.get(url)
+            self._focus_game_iframe_after_load(driver)
         except Exception:
             raise
         try:
@@ -6181,6 +6192,7 @@ class BrowserRunner:
                     self._switch_to_handle(driver, handle)
                     self._install_hush_plus_cdp_hooks(driver)
                     driver.get(url)
+                    self._focus_game_iframe_after_load(driver)
                     if background_handle:
                         try:
                             self._switch_to_handle(driver, background_handle)
@@ -6210,6 +6222,7 @@ class BrowserRunner:
             handle = driver.current_window_handle
             self._install_hush_plus_cdp_hooks(driver)
             driver.get(url)
+            self._focus_game_iframe_after_load(driver)
         self._switch_to_handle(driver, handle)
         self._apply_site_mobile_view(driver)
         state = SiteTabState(
@@ -6244,6 +6257,7 @@ class BrowserRunner:
             site.handle = driver.current_window_handle
             self._install_hush_plus_cdp_hooks(driver)
             driver.get(site.url)
+            self._focus_game_iframe_after_load(driver)
         self._switch_to_handle(driver, site.handle)
         self._apply_site_mobile_view(driver)
         site.last_reload_at = time.time()
