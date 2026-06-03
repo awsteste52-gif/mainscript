@@ -3682,6 +3682,30 @@ class BrowserRunner:
         except Exception:
             pass
     @staticmethod
+    def _find_game_rect_in_current_context(driver: webdriver.Chrome) -> dict:
+        return driver.execute_script(
+            """
+            const candidates = Array.from(document.querySelectorAll('canvas, iframe, game, [id*=game], [class*=game]'))
+              .map((el) => {
+                const r = el.getBoundingClientRect();
+                const area = Math.max(1, r.width * r.height);
+                const aspect = r.width / Math.max(1, r.height);
+                const mobileScore = (r.height >= 300 ? 1000 : 0)
+                  + (r.width <= 520 ? 700 : 0)
+                  + (aspect <= 0.85 ? 500 : 0)
+                  - Math.abs(aspect - 0.46) * 300
+                  - Math.max(0, r.width - 520)
+                  + Math.min(300, area / 2000);
+                return { x: r.left, y: r.top, width: r.width, height: r.height, tag: el.tagName, aspect, score: mobileScore };
+              })
+              .filter((r) => r.width >= 60 && r.height >= 160 && r.x < innerWidth && r.y < innerHeight);
+            candidates.sort((a, b) => b.score - a.score);
+            if (candidates.length) return candidates[0];
+            return { x: 0, y: 0, width: innerWidth || 430, height: innerHeight || 932, tag: 'viewport', score: 0 };
+            """
+        ) or {}
+
+    @staticmethod
     def _dispatch_js_click_on_driver(driver: webdriver.Chrome, x: float, y: float, selector: str = "") -> dict:
         return driver.execute_script(
             """
@@ -3724,6 +3748,41 @@ class BrowserRunner:
             selector,
         ) or {}
 
+    def _build_game_speed_click_points(self, rect: dict) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        width = float(rect.get("width") or 0)
+        height = float(rect.get("height") or 0)
+        left = float(rect.get("x") or 0)
+        top = float(rect.get("y") or 0)
+        minus_points = [
+            (left + (width * 0.41), top + (height * 0.905)),
+            (left + (width * 0.46), top + (height * 0.905)),
+            (left + (width * 0.38), top + (height * 0.885)),
+        ]
+        plus_points = [
+            (left + (width * 0.93), top + (height * 0.905)),
+            (left + (width * 0.88), top + (height * 0.905)),
+            (left + (width * 0.95), top + (height * 0.885)),
+            (left + (width * 0.90), top + (height * 0.930)),
+        ]
+        return minus_points, plus_points
+
+    def _fire_game_speed_clicks(self, driver: webdriver.Chrome, minus_points: list[tuple[float, float]], plus_points: list[tuple[float, float]], target_steps: int) -> int:
+        def js_click(x: float, y: float) -> None:
+            self._dispatch_js_click_on_driver(driver, x, y)
+            time.sleep(0.06)
+
+        for _ in range(4):
+            for point in minus_points:
+                js_click(*point)
+
+        step_count = max(0, target_steps - 1)
+        fired = 0
+        for _ in range(step_count):
+            for point in plus_points:
+                js_click(*point)
+                fired += 1
+        return fired
+
     def _apply_js_game_speed_on_driver(self, driver: webdriver.Chrome, config: dict) -> dict:
         """Use the game's own speed control through JavaScript DOM clicks.
 
@@ -3740,58 +3799,16 @@ class BrowserRunner:
         if target_steps <= 1:
             return {"attempted": False, "target": target_steps, "clicks": 0, "rect": None}
 
-        rect = driver.execute_script(
-            """
-            const candidates = Array.from(document.querySelectorAll('canvas, iframe, game, [id*=game], [class*=game]'))
-              .map((el) => {
-                const r = el.getBoundingClientRect();
-                const area = Math.max(1, r.width * r.height);
-                const aspect = r.width / Math.max(1, r.height);
-                const mobileScore = (r.height >= 300 ? 1000 : 0)
-                  + (r.width <= 520 ? 700 : 0)
-                  + (aspect <= 0.85 ? 500 : 0)
-                  - Math.abs(aspect - 0.46) * 300
-                  - Math.max(0, r.width - 520)
-                  + Math.min(300, area / 2000);
-                return { x: r.left, y: r.top, width: r.width, height: r.height, tag: el.tagName, aspect, score: mobileScore };
-              })
-              .filter((r) => r.width >= 60 && r.height >= 160 && r.x < innerWidth && r.y < innerHeight);
-            candidates.sort((a, b) => b.score - a.score);
-            if (candidates.length) return candidates[0];
-            return { x: 0, y: 0, width: innerWidth || 430, height: innerHeight || 932, tag: 'viewport' };
-            """
-        ) or {}
+        self._focus_game_iframe_after_load(driver, wait_seconds=0)
+        rect = self._find_game_rect_in_current_context(driver)
         width = float(rect.get("width") or 0)
         height = float(rect.get("height") or 0)
         if width <= 0 or height <= 0:
             return {"attempted": False, "target": target_steps, "clicks": 0, "rect": rect}
 
-        left = float(rect.get("x") or 0)
-        top = float(rect.get("y") or 0)
-        minus_points = [
-            (left + (width * 0.41), top + (height * 0.905)),
-            (left + (width * 0.46), top + (height * 0.905)),
-            (left + (width * 0.38), top + (height * 0.885)),
-        ]
-        plus_points = [
-            (left + (width * 0.93), top + (height * 0.905)),
-            (left + (width * 0.88), top + (height * 0.905)),
-            (left + (width * 0.95), top + (height * 0.885)),
-            (left + (width * 0.90), top + (height * 0.930)),
-        ]
-
-        def js_click(x: float, y: float) -> None:
-            self._dispatch_js_click_on_driver(driver, x, y)
-            time.sleep(0.06)
-
-        for _ in range(4):
-            for point in minus_points:
-                js_click(*point)
-        clicks = max(0, target_steps - 1)
-        for _ in range(clicks):
-            for point in plus_points:
-                js_click(*point)
-        return {"attempted": True, "target": target_steps, "clicks": clicks * len(plus_points), "rect": rect}
+        minus_points, plus_points = self._build_game_speed_click_points(rect)
+        fired = self._fire_game_speed_clicks(driver, minus_points, plus_points, target_steps)
+        return {"attempted": True, "target": target_steps, "clicks": fired, "rect": rect}
     def set_calibrated_cell(self, cell: tuple[int, int, int, int] | None) -> None:
         self.calibrated_cell = cell
         if cell is not None:
@@ -5219,14 +5236,52 @@ class BrowserRunner:
         else:
             self._apply_site_mobile_view(driver)
 
-    def _focus_game_iframe_after_load(self, driver: webdriver.Chrome) -> None:
-        time.sleep(6)
+    def _focus_game_iframe_after_load(self, driver: webdriver.Chrome, wait_seconds: float = 6.0) -> bool:
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
         try:
-            iframe_jogo = driver.find_element(By.TAG_NAME, "iframe")
-            driver.switch_to.frame(iframe_jogo)
-            print("Foco alterado para o iframe do jogo com sucesso!")
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+
+        try:
+            top_rect = self._find_game_rect_in_current_context(driver)
+            if str(top_rect.get("tag") or "").lower() != "iframe" and float(top_rect.get("score") or 0) >= 900:
+                print("Jogo encontrado no contexto principal.")
+                return True
+        except Exception:
+            pass
+
+        try:
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
         except Exception as e:
             print(f"Aviso: Nao encontrou iframe na pagina principal, rodando no contexto atual. {e}")
+            return False
+
+        for index in range(len(frames)):
+            try:
+                driver.switch_to.default_content()
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                if index >= len(frames):
+                    break
+                driver.switch_to.frame(frames[index])
+                rect = self._find_game_rect_in_current_context(driver)
+                has_game = str(rect.get("tag") or "").lower() != "viewport" or float(rect.get("score") or 0) >= 900
+                if has_game:
+                    print(f"Foco alterado para o iframe do jogo com sucesso! iframe={index}")
+                    break
+            except Exception as e:
+                print(f"Aviso: iframe {index} ignorado durante varredura. {e}")
+                continue
+        else:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+            print("Aviso: Nao encontrou iframe de jogo, rodando no contexto atual.")
+            return False
+
+        return True
 
     def _open_site_window(
         self,
