@@ -1651,7 +1651,7 @@ const maybeHandleDownloadPopup = async (timeout = 12000) => {
 """.strip()
 
 SPEED_HACK_PAGE_SCRIPT = r"""
-// LTDF silent speed bridge: estado global apenas, sem hooks de clock/timers.
+// LTDF speed bridge: estado global + proxy redundante de requestAnimationFrame.
 window._ltdfSpeed = 1.0;
 window._ltdfTargetSpeed = 1.0;
 window._ltdfUserActivated = false;
@@ -1698,18 +1698,64 @@ window.setSpeedConfig = function(val) {
   };
 
   window.__ltdfSpeedDebug = {
-    mode: "silent-native",
+    mode: "raf-proxy",
     ready: false,
     speed: 1.0,
     targetSpeed: 1.0,
     userActivated: false,
     configCount: 0,
+    rafProxyInstalled: false,
+    rafProxyReapplyCount: 0,
   };
+
+  function installRafProxy(source) {
+    try {
+      const cfg = normalizeConfig(window._ltdfSpeedConfig || window.__ltdfSpeedInitialConfig || {});
+      if (!cfg.enabled || cfg.speed <= 1.0) return false;
+      if (window.__ltdfNativeRequestAnimationFrame && window.requestAnimationFrame === window.__ltdfRafProxy) return true;
+      const currentRaf = window.requestAnimationFrame;
+      if (typeof currentRaf !== "function") return false;
+      if (!window.__ltdfNativeRequestAnimationFrame || currentRaf !== window.__ltdfRafProxy) {
+        window.__ltdfNativeRequestAnimationFrame = currentRaf.bind(window);
+      }
+      if (!window.__ltdfNativeCancelAnimationFrame && typeof window.cancelAnimationFrame === "function") {
+        window.__ltdfNativeCancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+      }
+      window.__ltdfRafOriginReal = 0;
+      window.__ltdfRafOriginVirtual = 0;
+      window.__ltdfRafProxy = function(callback) {
+        return window.__ltdfNativeRequestAnimationFrame(function(timestamp) {
+          try {
+            const speed = Math.max(0.1, Math.min(16, Number(window._ltdfSpeed || 1) || 1));
+            if (!window.__ltdfRafOriginReal || speed <= 1.0) {
+              window.__ltdfRafOriginReal = timestamp;
+              window.__ltdfRafOriginVirtual = timestamp;
+            }
+            const acceleratedTimestamp = speed > 1.0
+              ? window.__ltdfRafOriginVirtual + ((timestamp - window.__ltdfRafOriginReal) * speed)
+              : timestamp;
+            callback(acceleratedTimestamp);
+          } catch (_) {
+            callback(timestamp);
+          }
+        });
+      };
+      window.__ltdfRafProxy.__ltdfRafProxy = true;
+      window.requestAnimationFrame = window.__ltdfRafProxy;
+      window.__ltdfSpeedDebug.rafProxyInstalled = true;
+      window.__ltdfSpeedDebug.rafProxySource = source || "install";
+      window.__ltdfSpeedDebug.rafProxyReapplyCount += 1;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
     window._ltdfSpeedConfig = next;
     window.setSpeedConfig(next.enabled ? next.speed : 1.0);
+    installRafProxy(source || "apply");
     window.__ltdfSpeedDebug.ready = window._ltdfReady;
     window.__ltdfSpeedDebug.speed = window._ltdfSpeed;
     window.__ltdfSpeedDebug.targetSpeed = window._ltdfTargetSpeed;
@@ -1718,7 +1764,7 @@ window.setSpeedConfig = function(val) {
     window.__ltdfSpeedDebug.source = source || "direct";
     return {
       ok: true,
-      mode: "silent-native",
+      mode: "raf-proxy",
       speed: window._ltdfSpeed,
       targetSpeed: window._ltdfTargetSpeed,
       ready: window._ltdfReady,
@@ -1733,6 +1779,7 @@ window.setSpeedConfig = function(val) {
       if (typeof window.__ltdfApplySpeedConfig === "function") {
         window.__ltdfApplySpeedConfig(cfg, source || "late_reapply");
       }
+      installRafProxy(source || "late_reapply");
     } catch (_) {}
   }
 
@@ -1744,6 +1791,11 @@ window.setSpeedConfig = function(val) {
   }
   setTimeout(() => ltdfLateSpeedReapply("late_250ms"), 250);
   setTimeout(() => ltdfLateSpeedReapply("late_1000ms"), 1000);
+  const rafFallbackStartedAt = Date.now();
+  const rafFallbackTimer = setInterval(() => {
+    ltdfLateSpeedReapply("raf_interval_guard");
+    if (Date.now() - rafFallbackStartedAt > 5000) clearInterval(rafFallbackTimer);
+  }, 200);
 
   window.addEventListener("message", (event) => {
     if (event.source !== window || !event.data) return;
@@ -1866,6 +1918,42 @@ function sendHeartbeat() {
         activeUrl: _activeWsUrl,
         ts: Date.now(),
     }).catch(() => {});
+}
+
+function installCacheBustRules() {
+    try {
+        if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateDynamicRules) return;
+        const ruleIds = [1987601, 1987602];
+        chrome.declarativeNetRequest.updateDynamicRules({
+            removeRuleIds: ruleIds,
+            addRules: [
+                {
+                    id: 1987601,
+                    priority: 1,
+                    action: {
+                        type: 'modifyHeaders',
+                        requestHeaders: [
+                            { header: 'Cache-Control', operation: 'set', value: 'no-cache' },
+                            { header: 'Pragma', operation: 'set', value: 'no-cache' },
+                        ],
+                    },
+                    condition: { regexFilter: '^https?://', resourceTypes: ['script'] },
+                },
+                {
+                    id: 1987602,
+                    priority: 1,
+                    action: {
+                        type: 'modifyHeaders',
+                        responseHeaders: [
+                            { header: 'Cache-Control', operation: 'set', value: 'no-store, no-cache, must-revalidate, max-age=0' },
+                            { header: 'Pragma', operation: 'set', value: 'no-cache' },
+                        ],
+                    },
+                    condition: { regexFilter: '^https?://', resourceTypes: ['script'] },
+                },
+            ],
+        }, () => {});
+    } catch (_) {}
 }
 
 function currentWsUrl() {
@@ -2048,6 +2136,7 @@ chrome.storage.local.get(['ltdf_speed_config'], (stored) => {
     }
     ensureSessionId().then(connect);
 });
+installCacheBustRules();
 setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
         sendHeartbeat();
@@ -5437,7 +5526,7 @@ class BrowserRunner:
             "name": "LTDF Mirror",
             "version": "5.0",
             "description": "Mirror relay - tela unica em grade",
-            "permissions": ["tabs", "storage"],
+            "permissions": ["tabs", "storage", "declarativeNetRequest"],
             "host_permissions": host_permissions,
             "background": {"service_worker": "background.js"},
             "content_scripts": [
