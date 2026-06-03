@@ -75,6 +75,10 @@ class LTDFReactiveInjector:
               }
               if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__);
               window.__LTDF_CHECK_INTERVAL__ = null;
+              if (window.__LTDF_SNIPER_REBIND_INTERVAL__) clearInterval(window.__LTDF_SNIPER_REBIND_INTERVAL__);
+              window.__LTDF_SNIPER_REBIND_INTERVAL__ = null;
+              if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect();
+              window.__LTDF_SNIPER_OBSERVER__ = null;
               window.__LTDF_SNIPER_ACTIVE__ = false;
               return { ok:true, status:"DESTROYED_LEGACY" };
             } catch (error) {
@@ -105,6 +109,9 @@ class LTDFReactiveInjector:
     window.__LTDF_CHECK_INTERVAL__ = null;
     try {{ if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect(); }} catch (_) {{}}
     window.__LTDF_SNIPER_OBSERVER__ = null;
+    window.__LTDF_SNIPER_OBSERVER_ROOT__ = null;
+    try {{ if (window.__LTDF_SNIPER_REBIND_INTERVAL__) clearInterval(window.__LTDF_SNIPER_REBIND_INTERVAL__); }} catch (_) {{}}
+    window.__LTDF_SNIPER_REBIND_INTERVAL__ = null;
     window.__LTDF_SNIPER_OBSERVER_BUSY__ = false;
     window.__LTDF_SNIPER_ACTIVE__ = false;
     window.__LTDF_SNIPER_LAST_DESTROY__ = {{ reason: reason || "destroy", href: location.href, at: Date.now() }};
@@ -187,11 +194,20 @@ class LTDFReactiveInjector:
     }}
   }}
 
+  function observerRoot() {{
+    return document.documentElement || document.body;
+  }}
+
+  function handleReadyMutation(source) {{
+    const current = findSpinButton();
+    if (enabled(current)) clickBurst(source || "mutation_ready");
+  }}
+
   function startObserver() {{
     try {{ if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect(); }} catch (_) {{}}
     maybeEnableTurbo();
 
-    const root = document.body || document.documentElement;
+    const root = observerRoot();
     if (!root) return false;
 
     window.__LTDF_SNIPER_OBSERVER__ = new MutationObserver(() => {{
@@ -199,20 +215,29 @@ class LTDFReactiveInjector:
       window.__LTDF_SNIPER_OBSERVER_BUSY__ = true;
       setTimeout(() => {{
         try {{
-          const current = findSpinButton();
-          if (enabled(current)) clickBurst("mutation_ready");
+          handleReadyMutation("mutation_ready");
         }} finally {{
           window.__LTDF_SNIPER_OBSERVER_BUSY__ = false;
         }}
       }}, CONFIG.observerCooldownMs);
     }});
 
+    window.__LTDF_SNIPER_OBSERVER_ROOT__ = root;
     window.__LTDF_SNIPER_OBSERVER__.observe(root, {{
       attributes:true,
       childList:true,
       subtree:true,
       attributeFilter:["class", "disabled", "aria-disabled"]
     }});
+    try {{ if (window.__LTDF_SNIPER_REBIND_INTERVAL__) clearInterval(window.__LTDF_SNIPER_REBIND_INTERVAL__); }} catch (_) {{}}
+    window.__LTDF_SNIPER_REBIND_INTERVAL__ = setInterval(() => {{
+      const currentRoot = observerRoot();
+      if (!currentRoot) return;
+      if (!window.__LTDF_SNIPER_OBSERVER__ || window.__LTDF_SNIPER_OBSERVER_ROOT__ !== currentRoot || !window.__LTDF_SNIPER_OBSERVER_ROOT__.isConnected) {{
+        startObserver();
+        handleReadyMutation("observer_rebind");
+      }}
+    }}, 2000);
     return true;
   }}
 
