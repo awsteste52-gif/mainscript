@@ -19,7 +19,7 @@ import time
 import uuid
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 from urllib.parse import quote, urlparse
@@ -7369,7 +7369,11 @@ class LTDFSingleFileApp(ctk.CTk):
                 self.html5_speed_enabled_var.set(selected_enabled)
             if hasattr(self, "quick_speed_enabled_var"):
                 self.quick_speed_enabled_var.set(selected_enabled)
-            self.workspace_data = replace(self.workspace_data, html5_speed_enabled=selected_enabled, html5_speed=selected_speed)
+            speed_update = {"html5_speed_enabled": selected_enabled, "html5_speed": selected_speed}
+            if hasattr(self.workspace_data, "model_copy"):
+                self.workspace_data = self.workspace_data.model_copy(update=speed_update)
+            else:
+                self.workspace_data = self.workspace_data.copy(update=speed_update)
             self.workspace_store.save(self.workspace_data)
             self.browser_runner.set_workspace_data(self.workspace_data)
             config = build_html5_speed_config(self.workspace_data)
