@@ -1989,6 +1989,202 @@ window.setSpeedConfig = function(val) {
     }
   }
 
+  function ltdfIsVisible(el) {
+    try {
+      if (!el || !el.isConnected) return false;
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return rect.width > 2 && rect.height > 2 && style.visibility !== "hidden" && style.display !== "none" && style.opacity !== "0";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function ltdfNorm(text) {
+    try {
+      return String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    } catch (_) {
+      return String(text || "").toLowerCase();
+    }
+  }
+
+  function ltdfDispatchClick(el, source) {
+    if (!el) return false;
+    try { el.scrollIntoView({ block: "center", inline: "center" }); } catch (_) {}
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    const x = rect ? Math.round(rect.left + rect.width / 2) : Math.round(innerWidth / 2);
+    const y = rect ? Math.round(rect.top + rect.height / 2) : Math.round(innerHeight / 2);
+    const pointerOpts = { bubbles:true, cancelable:true, composed:true, clientX:x, clientY:y, screenX:x, screenY:y, button:0, buttons:1, pointerId:1, pointerType:"mouse", isPrimary:true, view:window };
+    const mouseDown = { bubbles:true, cancelable:true, composed:true, clientX:x, clientY:y, screenX:x, screenY:y, button:0, buttons:1, view:window };
+    const mouseUp = { ...mouseDown, buttons:0 };
+    try { if (typeof el.focus === "function") el.focus({ preventScroll:true }); } catch (_) {}
+    try { el.dispatchEvent(new PointerEvent("pointerdown", pointerOpts)); } catch (_) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", mouseDown)); } catch (_) {}
+    try { el.dispatchEvent(new PointerEvent("pointerup", { ...pointerOpts, buttons:0 })); } catch (_) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", mouseUp)); } catch (_) {}
+    try { el.dispatchEvent(new MouseEvent("click", mouseUp)); } catch (_) {}
+    try { if (typeof el.click === "function") el.click(); } catch (_) {}
+    try {
+      window.__ltdfSpeedDebug.lastNativeClick = { source: source || "native", tag: el.tagName || "", cls: String(el.className || ""), at: Date.now() };
+    } catch (_) {}
+    return true;
+  }
+
+  function ltdfFindBySelectors(selectors) {
+    for (const selector of selectors) {
+      try {
+        for (const el of Array.from(document.querySelectorAll(selector))) {
+          if (ltdfIsVisible(el)) return el;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function ltdfFindByText(tokens, selectors) {
+    const wanted = tokens.map(ltdfNorm);
+    for (const selector of selectors) {
+      try {
+        for (const el of Array.from(document.querySelectorAll(selector))) {
+          if (!ltdfIsVisible(el)) continue;
+          const text = ltdfNorm(`${el.textContent || ""} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("title") || ""} ${el.className || ""} ${el.id || ""}`);
+          if (wanted.some((token) => text.includes(token))) return el;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function ltdfIsActiveToggle(el) {
+    if (!el) return false;
+    try {
+      if (el.matches && el.matches("input[type='checkbox']")) return !!el.checked;
+      const text = ltdfNorm(`${el.className || ""} ${el.getAttribute("aria-pressed") || ""} ${el.getAttribute("aria-checked") || ""} ${el.getAttribute("data-state") || ""}`);
+      return /\b(active|ativo|on|true|checked|selected|selecionado|turbo-on|fast-on)\b/.test(text);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function ltdfFindTurboControl() {
+    const selectors = [
+      "#turbo", "#fastPlay", "#fast-play", "#quickSpin", "#quick-spin",
+      "[data-testid*='turbo' i]", "[data-testid*='fast' i]", "[data-testid*='quick' i]",
+      "[class*='turbo' i]", "[class*='fast' i]", "[class*='quick' i]",
+      "[id*='turbo' i]", "[id*='fast' i]", "[id*='quick' i]",
+      "button[aria-label*='turbo' i]", "button[aria-label*='fast' i]", "button[aria-label*='quick' i]",
+      "input[type='checkbox'][name*='turbo' i]", "input[type='checkbox'][name*='fast' i]",
+    ];
+    return ltdfFindBySelectors(selectors)
+      || ltdfFindByText(["turbo", "fast play", "fastplay", "quick spin", "quickspin", "rapido", "rapida", "acelerar"], ["button", "div", "span", "a", "label", "input"]);
+  }
+
+  function ltdfActivateNativeTurbo(source) {
+    try {
+      const turbo = ltdfFindTurboControl();
+      if (!turbo) return { ok:false, reason:"turbo_not_found" };
+      if (turbo.matches && turbo.matches("input[type='checkbox']") && !turbo.checked) {
+        turbo.checked = true;
+        turbo.dispatchEvent(new Event("input", { bubbles:true }));
+        turbo.dispatchEvent(new Event("change", { bubbles:true }));
+      }
+      if (!ltdfIsActiveToggle(turbo)) ltdfDispatchClick(turbo, source || "turbo");
+      window.__ltdfNativeTurboEnabled = true;
+      window.__ltdfSpeedDebug.nativeTurbo = { ok:true, source: source || "turbo", at: Date.now(), tag: turbo.tagName || "", cls: String(turbo.className || "") };
+      return { ok:true, tag: turbo.tagName || "", cls: String(turbo.className || "") };
+    } catch (error) {
+      return { ok:false, reason:String(error) };
+    }
+  }
+
+  function ltdfFindActionButton() {
+    const selectors = [
+      ".spin_center", "[class*='spin_center' i]", "[class*='spin-center' i]",
+      "[class*='spin' i]", "[class*='bet' i]", "[class*='play' i]",
+      "button[data-testid*='spin' i]", "button[data-testid*='play' i]",
+      "button[aria-label*='spin' i]", "button[aria-label*='play' i]",
+    ];
+    return ltdfFindBySelectors(selectors)
+      || ltdfFindByText(["spin", "girar", "rodar", "jogar", "apostar", "play", "start"], ["button", "div", "span", "a"]);
+  }
+
+  function ltdfIsActionReady(el) {
+    if (!ltdfIsVisible(el)) return false;
+    try {
+      const text = ltdfNorm(`${el.className || ""} ${el.getAttribute("disabled") || ""} ${el.getAttribute("aria-disabled") || ""} ${el.getAttribute("data-state") || ""}`);
+      if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+      if (/\b(disabled|desabilitado|loading|spinning|girando|busy|locked|bloqueado)\b/.test(text)) return false;
+      const style = getComputedStyle(el);
+      if (style.pointerEvents === "none") return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function ltdfClickActionWhenReady(source) {
+    const button = ltdfFindActionButton();
+    if (!ltdfIsActionReady(button)) return { ok:false, reason:"action_not_ready" };
+    const now = Date.now();
+    if (window.__ltdfLastReadyActionClickAt && now - window.__ltdfLastReadyActionClickAt < 120) {
+      return { ok:false, reason:"ready_click_throttled" };
+    }
+    window.__ltdfLastReadyActionClickAt = now;
+    return { ok:ltdfDispatchClick(button, source || "ready_action"), tag: button.tagName || "", cls: String(button.className || "") };
+  }
+
+  function ltdfScheduleReadyClick(source) {
+    if (!window.__ltdfNativeTurboEnabled && !window._ltdfUserActivated) return;
+    const attempts = [0, 35, 75, 140, 240];
+    attempts.forEach((delay) => nativeClock.setTimeout(() => ltdfClickActionWhenReady(source || "server_payload"), delay));
+  }
+
+  function installNativeAutomation(source) {
+    try {
+      if (window.__ltdfNativeAutomationInstalled) {
+        ltdfActivateNativeTurbo(source || "reapply");
+        return true;
+      }
+      window.__ltdfNativeAutomationInstalled = true;
+      ltdfActivateNativeTurbo(source || "install");
+      if (typeof window.WebSocket === "function" && !window.__ltdfNativeWebSocket) {
+        window.__ltdfNativeWebSocket = window.WebSocket;
+        window.WebSocket = new Proxy(window.__ltdfNativeWebSocket, {
+          construct(target, args) {
+            const socket = Reflect.construct(target, args);
+            try {
+              socket.addEventListener("message", () => {
+                window.__ltdfLastServerPayloadAt = Date.now();
+                ltdfScheduleReadyClick("ws_payload");
+              });
+            } catch (_) {}
+            return socket;
+          },
+        });
+      }
+      try {
+        const observer = new MutationObserver(() => {
+          ltdfActivateNativeTurbo("mutation");
+          ltdfClickActionWhenReady("button_ready_mutation");
+        });
+        observer.observe(document.documentElement || document, { childList:true, subtree:true, attributes:true, attributeFilter:["class", "disabled", "aria-disabled", "data-state"] });
+        window.__ltdfNativeAutomationObserver = observer;
+      } catch (_) {}
+      nativeClock.setInterval(() => {
+        ltdfActivateNativeTurbo("interval");
+        ltdfClickActionWhenReady("button_ready_interval");
+      }, 250);
+      window.__ltdfSpeedDebug.nativeAutomationInstalled = true;
+      window.__ltdfSpeedDebug.nativeAutomationSource = source || "install";
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  window.__ltdfActivateNativeTurbo = ltdfActivateNativeTurbo;
+  window.__ltdfClickActionWhenReady = ltdfClickActionWhenReady;
+
   window.__ltdfApplySpeedConfig = function(config, source) {
     const next = normalizeConfig(config || {});
     rebaseTimeOrigin();
@@ -1998,6 +2194,7 @@ window.setSpeedConfig = function(val) {
     installRafProxy(source || "apply");
     installWorkerProxy(source || "apply");
     installWasmProxy(source || "apply");
+    installNativeAutomation(source || "apply");
     window.__ltdfSpeedDebug.ready = window._ltdfReady;
     window.__ltdfSpeedDebug.speed = window._ltdfSpeed;
     window.__ltdfSpeedDebug.targetSpeed = window._ltdfTargetSpeed;
@@ -2025,6 +2222,7 @@ window.setSpeedConfig = function(val) {
       installRafProxy(source || "late_reapply");
       installWorkerProxy(source || "late_reapply");
       installWasmProxy(source || "late_reapply");
+      installNativeAutomation(source || "late_reapply");
     } catch (_) {}
   }
 
@@ -4054,15 +4252,23 @@ class BrowserRunner:
                 config,
             )
         try:
-            self._log("Speed HTML5 driver etapa: tentando clique JS no motor grafico.", level="INFO")
-            native = self._apply_js_game_speed_on_driver(driver, config)
+            self._log("Speed HTML5 driver etapa: tentando turbo nativo e clique pronto.", level="INFO")
+            native = self._activate_native_turbo_on_driver(driver)
+            if native.get("ok"):
+                self._log(
+                    f"Turbo nativo acionado: turbo={native.get('turbo')} ready_click={native.get('ready_click')}",
+                    level="INFO",
+                )
+            else:
+                self._log(f"Turbo nativo nao confirmado, fallback JS grafico: {native.get('reason')}", level="WARN")
+                native = self._apply_js_game_speed_on_driver(driver, config)
             if native.get("attempted"):
                 self._log(
                     f"Speed HTML5 JS grafico: alvo={native.get('target', 1)} clicks={native.get('clicks', 0)} rect={native.get('rect')}",
                     level="INFO",
                 )
         except Exception as exc:
-            self._log(f"Speed HTML5 JS grafico falhou: {exc}", level="WARN")
+            self._log(f"Turbo nativo / Speed HTML5 JS grafico falhou: {exc}", level="WARN")
         try:
             debug = (result or {}).get("debug") or {}
             self._log(
@@ -4202,6 +4408,20 @@ class BrowserRunner:
         minus_points, plus_points = self._build_game_speed_click_points(rect)
         fired = self._fire_game_speed_clicks(driver, minus_points, plus_points, target_steps)
         return {"attempted": True, "target": target_steps, "clicks": fired, "rect": rect}
+
+    def _activate_native_turbo_on_driver(self, driver: webdriver.Chrome) -> dict:
+        result = driver.execute_script(
+            """
+            const turbo = typeof window.__ltdfActivateNativeTurbo === 'function'
+              ? window.__ltdfActivateNativeTurbo('python_apply')
+              : { ok:false, reason:'turbo_helper_missing' };
+            const readyClick = typeof window.__ltdfClickActionWhenReady === 'function'
+              ? window.__ltdfClickActionWhenReady('python_ready_probe')
+              : { ok:false, reason:'ready_helper_missing' };
+            return { ok: !!(turbo && turbo.ok), turbo, ready_click: readyClick, debug: window.__ltdfSpeedDebug || null };
+            """
+        ) or {}
+        return dict(result or {})
     def set_calibrated_cell(self, cell: tuple[int, int, int, int] | None) -> None:
         self.calibrated_cell = cell
         if cell is not None:
