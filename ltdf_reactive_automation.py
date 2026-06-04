@@ -32,7 +32,7 @@ class LTDFReactiveConfig:
     """Runtime controls for safe injection."""
 
     dom_timeout_seconds: int = 30
-    loading_poll_ms: int = 800
+    loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
     watchdog_interval_ms: int = 2500
     click_burst: int = 3

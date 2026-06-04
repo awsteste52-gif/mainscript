@@ -1705,6 +1705,8 @@ window.setSpeedConfig = function(val) {
     window.__ltdfNativeDomReadyTimer = null;
     try { if (window.__ltdfNativeAutomationInterval) window.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
     window.__ltdfNativeAutomationInterval = null;
+    try { if (window.__LTDF_SPEED_STANDBY_INTERVAL__) window.clearInterval(window.__LTDF_SPEED_STANDBY_INTERVAL__); } catch (_) {}
+    window.__LTDF_SPEED_STANDBY_INTERVAL__ = null;
     try { if (window.__ltdfNativeReobserveTimer) window.clearTimeout(window.__ltdfNativeReobserveTimer); } catch (_) {}
     window.__ltdfNativeReobserveTimer = null;
     try { if (window.__ltdfNativeAutomationObserver) window.__ltdfNativeAutomationObserver.disconnect(); } catch (_) {}
@@ -2139,14 +2141,19 @@ window.setSpeedConfig = function(val) {
     }
   }
 
+  const LTDF_ACTION_BUTTON_SELECTORS = [
+    ".spin_center", "[class*='spin_center' i]", "[class*='spin-center' i]",
+    "[class*='spin' i]", "[class*='bet' i]", "[class*='play' i]",
+    "button[data-testid*='spin' i]", "button[data-testid*='play' i]",
+    "button[aria-label*='spin' i]", "button[aria-label*='play' i]",
+  ];
+
+  function ltdfFindActionButtonFast() {
+    return ltdfFindBySelectors(LTDF_ACTION_BUTTON_SELECTORS);
+  }
+
   function ltdfFindActionButton() {
-    const selectors = [
-      ".spin_center", "[class*='spin_center' i]", "[class*='spin-center' i]",
-      "[class*='spin' i]", "[class*='bet' i]", "[class*='play' i]",
-      "button[data-testid*='spin' i]", "button[data-testid*='play' i]",
-      "button[aria-label*='spin' i]", "button[aria-label*='play' i]",
-    ];
-    return ltdfFindBySelectors(selectors)
+    return ltdfFindActionButtonFast()
       || ltdfFindByText(["spin", "girar", "rodar", "jogar", "apostar", "play", "start"], ["button", "div", "span", "a"]);
   }
 
@@ -2267,6 +2274,8 @@ window.setSpeedConfig = function(val) {
   function ltdfClearNativeAutomationTimers() {
     try { if (window.__LTDF_CHECK_INTERVAL__) nativeClock.clearInterval(window.__LTDF_CHECK_INTERVAL__); } catch (_) {}
     window.__LTDF_CHECK_INTERVAL__ = null;
+    try { if (window.__LTDF_SPEED_STANDBY_INTERVAL__) nativeClock.clearInterval(window.__LTDF_SPEED_STANDBY_INTERVAL__); } catch (_) {}
+    window.__LTDF_SPEED_STANDBY_INTERVAL__ = null;
     try { if (window.__ltdfNativeDomReadyTimer) nativeClock.clearTimeout(window.__ltdfNativeDomReadyTimer); } catch (_) {}
     window.__ltdfNativeDomReadyTimer = null;
     try { if (window.__ltdfNativeAutomationInterval) nativeClock.clearInterval(window.__ltdfNativeAutomationInterval); } catch (_) {}
@@ -2405,17 +2414,21 @@ window.setSpeedConfig = function(val) {
   window.__ltdfHasMainGameInterface = ltdfHasMainGameInterface;
   window.__ltdfGetPersistentObserverRoot = ltdfGetPersistentObserverRoot;
 
-  window.__ltdfApplySpeedConfig = function(config, source) {
+  function ltdfActivateSpeedAfterGeometry(config, source) {
     const next = normalizeConfig(config || {});
     rebaseTimeOrigin();
     window._ltdfSpeedConfig = next;
     window.setSpeedConfig(next.enabled ? next.speed : 1.0);
+    try { if (window.__LTDF_SPEED_STANDBY_INTERVAL__) nativeClock.clearInterval(window.__LTDF_SPEED_STANDBY_INTERVAL__); } catch (_) {}
+    window.__LTDF_SPEED_STANDBY_INTERVAL__ = null;
     installTimeProxies(source || "apply");
     installRafProxy(source || "apply");
     installWorkerProxy(source || "apply");
     installWasmProxy(source || "apply");
     installNativeAutomation(source || "apply");
     window.__ltdfSpeedDebug.ready = window._ltdfReady;
+    window.__ltdfSpeedDebug.standby = false;
+    window.__ltdfSpeedDebug.activatedAfterGeometry = true;
     window.__ltdfSpeedDebug.speed = window._ltdfSpeed;
     window.__ltdfSpeedDebug.targetSpeed = window._ltdfTargetSpeed;
     window.__ltdfSpeedDebug.userActivated = window._ltdfUserActivated;
@@ -2430,6 +2443,36 @@ window.setSpeedConfig = function(val) {
       userActivated: window._ltdfUserActivated,
       config: window._ltdfSpeedConfig,
     };
+  }
+
+  function ltdfArmSpeedStandby(config, source) {
+    const next = normalizeConfig(config || {});
+    window._ltdfSpeedConfig = next;
+    window._ltdfTargetSpeed = next.enabled ? next.speed : 1.0;
+    window.__ltdfSpeedDebug.ready = false;
+    window.__ltdfSpeedDebug.standby = true;
+    window.__ltdfSpeedDebug.standbySource = source || "standby";
+    window.__ltdfSpeedDebug.standbyPollMs = 1000;
+    if (window.__LTDF_SPEED_STANDBY_INTERVAL__) {
+      return { ok:true, standby:true, reason:"waiting_renderable_button", pollMs:1000, config:next };
+    }
+    window.__LTDF_SPEED_STANDBY_INTERVAL__ = nativeClock.setInterval(() => {
+      try {
+        const target = ltdfFindActionButtonFast();
+        if (!ltdfHasRenderableGeometry(target)) return;
+        ltdfActivateSpeedAfterGeometry(window._ltdfSpeedConfig || next, "standby_geometry_ready");
+      } catch (_) {}
+    }, 1000);
+    return { ok:true, standby:true, reason:"waiting_renderable_button", pollMs:1000, config:next };
+  }
+
+  window.__ltdfApplySpeedConfig = function(config, source) {
+    const next = normalizeConfig(config || {});
+    window._ltdfSpeedConfig = next;
+    if (!ltdfHasRenderableGeometry(ltdfFindActionButtonFast())) {
+      return ltdfArmSpeedStandby(next, source || "apply_standby");
+    }
+    return ltdfActivateSpeedAfterGeometry(next, source || "apply");
   };
 
   function ltdfLateSpeedReapply(source) {
@@ -2438,28 +2481,11 @@ window.setSpeedConfig = function(val) {
       if (typeof window.__ltdfApplySpeedConfig === "function") {
         window.__ltdfApplySpeedConfig(cfg, source || "late_reapply");
       }
-      installTimeProxies(source || "late_reapply");
-      installRafProxy(source || "late_reapply");
-      installWorkerProxy(source || "late_reapply");
-      installWasmProxy(source || "late_reapply");
-      installNativeAutomation(source || "late_reapply");
     } catch (_) {}
   }
 
   window.__ltdfForceSpeedReapply = ltdfLateSpeedReapply;
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => ltdfLateSpeedReapply("dom_content_loaded"), { once: true });
-  } else {
-    setTimeout(() => ltdfLateSpeedReapply("document_already_ready"), 0);
-  }
-  nativeClock.setTimeout(() => ltdfLateSpeedReapply("late_250ms"), 250);
-  nativeClock.setTimeout(() => ltdfLateSpeedReapply("late_1000ms"), 1000);
-  const rafFallbackStartedAt = nativeClock.dateNow ? nativeClock.dateNow() : Date.now();
-  const rafFallbackTimer = nativeClock.setInterval(() => {
-    ltdfLateSpeedReapply("raf_interval_guard");
-    const now = nativeClock.dateNow ? nativeClock.dateNow() : Date.now();
-    if (now - rafFallbackStartedAt > 5000) nativeClock.clearInterval(rafFallbackTimer);
-  }, 200);
+  window.__ltdfApplySpeedConfig(window.__ltdfSpeedInitialConfig || window._ltdfSpeedConfig || { enabled:false, speed:1.0 }, "initial_standby");
 
   window.addEventListener("message", (event) => {
     if (event.source !== window || !event.data) return;
@@ -6385,8 +6411,8 @@ class BrowserRunner:
   }
   const startedAt = Date.now();
   const timer = setInterval(() => {
-    if (injectMainWorld() || Date.now() - startedAt > 3000) clearInterval(timer);
-  }, 50);
+    if (injectMainWorld() || Date.now() - startedAt > 5000) clearInterval(timer);
+  }, 1000);
 })();
 //# sourceURL=ltdf_speed_injector.js
             """.strip()
