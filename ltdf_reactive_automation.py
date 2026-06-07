@@ -525,13 +525,13 @@ class LTDFReactiveInjector:
   const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
   const setIntervalOriginal = window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window);
   const clearIntervalOriginal = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window);
-  const rAForiginal = window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window);
+  const rAF_Nativo = window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window);
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
-  window.__LTDF_NATIVE_RAF__ = rAForiginal;
+  window.__LTDF_NATIVE_RAF__ = rAF_Nativo;
 
   const dataInicioReal = DateOriginal.now();
   let ultimoVirtualDate = dataInicioReal;
@@ -582,7 +582,7 @@ class LTDFReactiveInjector:
   }};
 
   window.requestAnimationFrame = function(callback) {{
-    return rAForiginal(function(timestamp) {{
+    return rAF_Nativo(function(timestamp) {{
       if (typeof callback === "function") {{
         callback(timestamp * MULTIPLICADOR_SPEED);
       }}
@@ -635,10 +635,10 @@ class LTDFReactiveInjector:
       const btnAtual = document.querySelector(SELETORES.botaoGirar);
       if (btnAtual) dispararCliqueNativo(btnAtual);
       if (window.__LTDF_SPEED_ACTIVE__) {{
-        window.__LTDF_SPEED_RAF_ID__ = rAForiginal(loopExecucaoRapida);
+        window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
       }}
     }};
-    window.__LTDF_SPEED_RAF_ID__ = rAForiginal(loopExecucaoRapida);
+    window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
     return true;
   }}
 
