@@ -482,7 +482,14 @@ class LTDFReactiveInjector:
   function cleanup(reason) {{
     try {{
       const nativeClearInterval = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval;
-      if (window.__LTDF_CHECK_INTERVAL__) nativeClearInterval(window.__LTDF_CHECK_INTERVAL__);
+      const nativeClearTimeout = window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout;
+      if (window.__LTDF_CHECK_INTERVAL__) {{
+        if (typeof window.__LTDF_CHECK_INTERVAL__ === "object" && window.__LTDF_CHECK_INTERVAL__.id) {{
+          nativeClearTimeout(window.__LTDF_CHECK_INTERVAL__.id);
+        }} else {{
+          nativeClearInterval(window.__LTDF_CHECK_INTERVAL__);
+        }}
+      }}
     }} catch (_) {{}}
     window.__LTDF_CHECK_INTERVAL__ = null;
     try {{ if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__); }} catch (_) {{}}
@@ -495,6 +502,7 @@ class LTDFReactiveInjector:
       if (native.Date) window.Date = native.Date;
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
+      if (native.clearInterval) window.clearInterval = native.clearInterval;
       if (native.rAF) window.requestAnimationFrame = native.rAF;
     }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_DATE__) window.Date = window.__LTDF_NATIVE_DATE__; }} catch (_) {{}}
@@ -520,6 +528,7 @@ class LTDFReactiveInjector:
       Date: window.__LTDF_NATIVE_DATE__ || window.Date,
       DateNow: (window.__LTDF_NATIVE_DATE__ || window.Date).now,
       setTimeout: window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window),
+      clearTimeout: window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout.bind(window),
       setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
       clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
       rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window)
@@ -536,6 +545,7 @@ class LTDFReactiveInjector:
         window.Date.now = window.__LTDF_NATIVOS__.DateNow;
         window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
+        window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
         window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
       }} catch (_) {{}}
       console.log("[LTDF] Sistema restaurado para a velocidade normal de fabrica.");
@@ -547,6 +557,7 @@ class LTDFReactiveInjector:
       window.Date = window.__LTDF_MODIFICADOS__.Date;
       window.setTimeout = window.__LTDF_MODIFICADOS__.setTimeout;
       window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
+      window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
       window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
     }}
     console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
@@ -570,12 +581,14 @@ class LTDFReactiveInjector:
 
   const DateOriginal = window.__LTDF_NATIVOS__.Date;
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
+  const clearTimeoutOriginal = window.__LTDF_NATIVOS__.clearTimeout || window.clearTimeout.bind(window);
   const setIntervalOriginal = window.__LTDF_NATIVOS__.setInterval;
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
   const rAF_Nativo = window.__LTDF_NATIVOS__.rAF;
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
+  window.__LTDF_NATIVE_CLEAR_TIMEOUT__ = clearTimeoutOriginal;
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAF_Nativo;
@@ -632,7 +645,27 @@ class LTDFReactiveInjector:
   }};
 
   const customInterval = function(callback, delay, ...args) {{
-    return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / currentSpeed()), ...args);
+    const intervalRef = {{ id:null, active:true }};
+    const baseDelay = Math.max(1, Number(delay || 0) || 0);
+    const cicloInterno = function() {{
+      if (!intervalRef.active) return;
+      if (typeof callback === "function") callback(...args);
+      if (intervalRef.active && window.__LTDF_SPEED_ACTIVE__) {{
+        const proximoDelay = Math.max(1, baseDelay / currentSpeed());
+        intervalRef.id = setTimeoutOriginal(cicloInterno, proximoDelay);
+      }}
+    }};
+    intervalRef.id = setTimeoutOriginal(cicloInterno, Math.max(1, baseDelay / currentSpeed()));
+    return intervalRef;
+  }};
+
+  window.clearInterval = function(ref) {{
+    if (ref && typeof ref === "object" && "id" in ref) {{
+      ref.active = false;
+      if (ref.id) clearTimeoutOriginal(ref.id);
+      return;
+    }}
+    return clearIntervalOriginal(ref);
   }};
 
   const customRAF = function(callback) {{
@@ -647,6 +680,7 @@ class LTDFReactiveInjector:
     Date: LTDFTimeHook,
     setTimeout: customTimeout,
     setInterval: customInterval,
+    clearInterval: window.clearInterval,
     rAF: customRAF
   }};
 
@@ -654,6 +688,7 @@ class LTDFReactiveInjector:
     window.Date = LTDFTimeHook;
     window.setTimeout = customTimeout;
     window.setInterval = customInterval;
+    window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
     window.requestAnimationFrame = customRAF;
   }}
 
