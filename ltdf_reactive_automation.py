@@ -181,50 +181,96 @@ class LTDFReactiveInjector:
             return []
 
     def _inject_known_game_iframe(self, driver: webdriver.Chrome, script: str) -> dict[str, Any] | None:
-        """Fast path for PGSoft/game iframes; ignores protected third-party frames."""
+        """Inject into every known PGSoft/game iframe target we can reach."""
 
         try:
             driver.switch_to.default_content()
         except Exception:
             return None
 
+        injections: list[dict[str, Any]] = []
+
+        def is_game_url(value: str) -> bool:
+            value = str(value or "").lower()
+            return any(token in value for token in ("pgsoft-games", "pgsoft", "game", "loader"))
+
+        def inject_current(path: list[int], reason: dict[str, Any]) -> None:
+            try:
+                result = driver.execute_script(script)
+                payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
+                payload["framePath"] = list(path)
+                payload["frameScore"] = 1200 if not path else 1100
+                payload["frameReason"] = reason
+                injections.append(payload)
+            except Exception as exc:
+                self.logger.debug("Falha ao injetar LTDF em path %s: %s", path, exc)
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
         try:
             current_url = str(getattr(driver, "current_url", "") or "").lower()
-            if "pgsoft-games" in current_url or "pgsoft" in current_url or "loader" in current_url:
-                result = driver.execute_script(script)
-                if isinstance(result, dict):
-                    result["framePath"] = []
-                    result["frameScore"] = 1200
-                    result["frameReason"] = {"directGameUrl": True}
-                return result
+            if is_game_url(current_url):
+                inject_current([], {"directGameUrl": True, "url": current_url[:180]})
         except Exception:
             pass
 
-        try:
-            frame_count = len(driver.find_elements(By.TAG_NAME, "iframe"))
-        except Exception:
-            frame_count = 0
-
-        for index in range(frame_count):
+        def scan_frame_tree(path: list[int], depth: int) -> None:
+            if depth < 0:
+                return
             try:
-                driver.switch_to.default_content()
-                frames = driver.find_elements(By.TAG_NAME, "iframe")
-                if index >= len(frames):
-                    continue
-                src = str(frames[index].get_attribute("src") or "").lower()
-                if not any(token in src for token in ("pgsoft", "game", "loader")):
-                    continue
-                driver.switch_to.frame(frames[index])
-                result = driver.execute_script(script)
-                if isinstance(result, dict):
-                    result["framePath"] = [index]
-                    result["frameScore"] = 1100
-                    result["frameReason"] = {"iframeSrc": src[:180]}
-                return result
+                if not self._switch_to_frame_path(driver, path):
+                    return
+                frame_count = len(driver.find_elements(By.TAG_NAME, "iframe"))
             except Exception as exc:
-                self.logger.debug("Iframe %s ignorado durante injecao LTDF: %s", index, exc)
-                continue
-        return None
+                self.logger.debug("Arvore iframe %s ignorada durante varredura LTDF: %s", path, exc)
+                return
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+            for index in range(frame_count):
+                child_path = [*path, index]
+                src = ""
+                try:
+                    if not self._switch_to_frame_path(driver, path):
+                        continue
+                    frames = driver.find_elements(By.TAG_NAME, "iframe")
+                    if index >= len(frames):
+                        continue
+                    src = str(frames[index].get_attribute("src") or "").lower()
+                except Exception as exc:
+                    self.logger.debug("Iframe %s ignorado durante leitura de src LTDF: %s", child_path, exc)
+                    continue
+                finally:
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+
+                if is_game_url(src) and self._switch_to_frame_path(driver, child_path):
+                    inject_current(child_path, {"iframeSrc": src[:180], "multiTarget": True})
+
+                scan_frame_tree(child_path, depth - 1)
+
+        scan_frame_tree([], int(self.config.iframe_scan_depth))
+        if not injections:
+            return None
+
+        return {
+            "ok": True,
+            "status": "MULTITARGET_IFRAME_OK",
+            "injections": len(injections),
+            "targets": injections,
+            "framePath": [item.get("framePath") for item in injections],
+            "frameScore": max(int(item.get("frameScore") or 0) for item in injections),
+            "frameReason": {"multiTarget": True},
+            "multiplier": injections[-1].get("multiplier"),
+        }
 
     def _inject_in_game_context(self, driver: webdriver.Chrome, script: str) -> dict[str, Any]:
         known_result = self._inject_known_game_iframe(driver, script)
