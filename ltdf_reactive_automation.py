@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -35,6 +36,7 @@ class LTDFReactiveConfig:
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
     watchdog_interval_ms: int = 1500
+    iframe_scan_depth: int = 2
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
 
@@ -58,11 +60,149 @@ class LTDFReactiveInjector:
 
         self.wait_for_dom(driver)
         self.logger.info("Injetando motor reativo LTDF.")
-        result = driver.execute_script(self._build_script())
+        result = self._inject_in_game_context(driver, self._build_script())
         if isinstance(result, dict):
             self.logger.info("Motor reativo LTDF: %s", result.get("status", "sem_status"))
             return result
         return {"ok": bool(result), "status": str(result)}
+
+    def _probe_current_context(self, driver: webdriver.Chrome, path: list[int]) -> dict[str, Any]:
+        """Score the active frame so injection lands inside the actual game DOM."""
+
+        try:
+            info = driver.execute_script(
+                """
+                const selector = arguments[0];
+                const path = arguments[1];
+                const button = document.querySelector(selector);
+                const rect = button && button.getBoundingClientRect ? button.getBoundingClientRect() : null;
+                const visibleButton = !!(button && (
+                  button.offsetWidth > 0 ||
+                  button.offsetHeight > 0 ||
+                  (rect && (rect.width > 0 || rect.height > 0))
+                ));
+                const canvas = document.querySelector("canvas");
+                const gameLike = document.querySelector("[id*='game' i], [class*='game' i], [id*='canvas' i], [class*='canvas' i]");
+                const frameCount = document.querySelectorAll("iframe").length;
+                return {
+                  path,
+                  href: String(location.href || ""),
+                  title: String(document.title || ""),
+                  hasButton: !!button,
+                  visibleButton,
+                  hasCanvas: !!canvas,
+                  hasGameLike: !!gameLike,
+                  frameCount,
+                  bodyTextLength: document.body ? String(document.body.innerText || "").length : 0
+                };
+                """,
+                self.config.selectors.spin_button,
+                path,
+            )
+        except Exception as exc:
+            return {"path": path, "error": str(exc), "score": -1}
+
+        score = 0
+        if info.get("visibleButton"):
+            score += 1000
+        if info.get("hasButton"):
+            score += 700
+        if info.get("hasCanvas"):
+            score += 250
+        if info.get("hasGameLike"):
+            score += 150
+        if info.get("frameCount"):
+            score += min(75, int(info.get("frameCount") or 0) * 10)
+        info["score"] = score
+        return info
+
+    def _switch_to_frame_path(self, driver: webdriver.Chrome, path: list[int]) -> bool:
+        try:
+            driver.switch_to.default_content()
+            for index in path:
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                if index >= len(frames):
+                    return False
+                driver.switch_to.frame(frames[index])
+            return True
+        except Exception:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+            return False
+
+    def _collect_frame_contexts(
+        self,
+        driver: webdriver.Chrome,
+        path: list[int] | None = None,
+        depth: int | None = None,
+    ) -> list[dict[str, Any]]:
+        path = path or []
+        depth = int(self.config.iframe_scan_depth if depth is None else depth)
+        contexts: list[dict[str, Any]] = []
+        if not self._switch_to_frame_path(driver, path):
+            return contexts
+
+        contexts.append(self._probe_current_context(driver, path))
+        if depth <= 0:
+            return contexts
+
+        try:
+            frame_count = len(driver.find_elements(By.TAG_NAME, "iframe"))
+        except Exception:
+            frame_count = 0
+
+        for index in range(frame_count):
+            contexts.extend(self._collect_frame_contexts(driver, [*path, index], depth - 1))
+        return contexts
+
+    def _fallback_largest_iframe_path(self, driver: webdriver.Chrome) -> list[int]:
+        try:
+            driver.switch_to.default_content()
+            index = driver.execute_script(
+                """
+                const frames = Array.from(document.querySelectorAll("iframe"));
+                let best = -1;
+                let bestArea = -1;
+                frames.forEach((frame, idx) => {
+                  const rect = frame.getBoundingClientRect ? frame.getBoundingClientRect() : null;
+                  const area = rect ? Math.max(0, rect.width) * Math.max(0, rect.height) : 0;
+                  if (area > bestArea) {
+                    best = idx;
+                    bestArea = area;
+                  }
+                });
+                return best;
+                """
+            )
+            return [int(index)] if isinstance(index, int) and index >= 0 else []
+        except Exception:
+            return []
+
+    def _inject_in_game_context(self, driver: webdriver.Chrome, script: str) -> dict[str, Any]:
+        contexts = self._collect_frame_contexts(driver)
+        best = max(contexts, key=lambda item: int(item.get("score") or -1), default={"path": [], "score": -1})
+        path = list(best.get("path") or [])
+
+        if int(best.get("score") or -1) <= 0:
+            path = self._fallback_largest_iframe_path(driver)
+
+        if not self._switch_to_frame_path(driver, path):
+            driver.switch_to.default_content()
+            path = []
+
+        result = driver.execute_script(script)
+        if isinstance(result, dict):
+            result["framePath"] = path
+            result["frameScore"] = int(best.get("score") or 0)
+            result["frameReason"] = {
+                "visibleButton": bool(best.get("visibleButton")),
+                "hasButton": bool(best.get("hasButton")),
+                "hasCanvas": bool(best.get("hasCanvas")),
+                "hasGameLike": bool(best.get("hasGameLike")),
+            }
+        return result
 
     def destroy(self, driver: webdriver.Chrome) -> dict[str, Any]:
         """Destroy any active browser-side instance in the current tab."""
