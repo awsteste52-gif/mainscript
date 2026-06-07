@@ -70,13 +70,19 @@ class LTDFReactiveInjector:
         result = driver.execute_script(
             """
             try {
+              if (typeof window.__LTDF_SPEED_DESTROY__ === "function") {
+                return window.__LTDF_SPEED_DESTROY__("python_destroy");
+              }
               if (typeof window.__LTDF_SNIPER_DESTROY__ === "function") {
-                return window.__LTDF_SNIPER_DESTROY__("python_destroy");
+                return window.__LTDF_SNIPER_DESTROY__("python_destroy_legacy");
               }
               if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__);
               window.__LTDF_CHECK_INTERVAL__ = null;
-              if (window.__LTDF_SNIPER_REBIND_INTERVAL__) clearInterval(window.__LTDF_SNIPER_REBIND_INTERVAL__);
-              window.__LTDF_SNIPER_REBIND_INTERVAL__ = null;
+              if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect();
+              window.__LTDF_SPEED_OBSERVER__ = null;
+              if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__);
+              window.__LTDF_SPEED_FALLBACK_INTERVAL__ = null;
+              window.__LTDF_SPEED_ACTIVE__ = false;
               if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect();
               window.__LTDF_SNIPER_OBSERVER__ = null;
               if (window.__LTDF_SNIPER_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SNIPER_FALLBACK_INTERVAL__);
@@ -108,29 +114,29 @@ class LTDFReactiveInjector:
   function destroy(reason) {{
     try {{ if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
     window.__LTDF_CHECK_INTERVAL__ = null;
-    try {{ if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect(); }} catch (_) {{}}
-    window.__LTDF_SNIPER_OBSERVER__ = null;
-    try {{ if (window.__LTDF_SNIPER_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SNIPER_FALLBACK_INTERVAL__); }} catch (_) {{}}
-    window.__LTDF_SNIPER_FALLBACK_INTERVAL__ = null;
-    window.__LTDF_SNIPER_ACTIVE__ = false;
-    window.__LTDF_SNIPER_MOTOR_ACTIVE__ = false;
-    window.__LTDF_SNIPER_LAST_DESTROY__ = {{ reason: reason || "destroy", href: location.href, at: Date.now() }};
+    try {{ if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect(); }} catch (_) {{}}
+    window.__LTDF_SPEED_OBSERVER__ = null;
+    try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
+    window.__LTDF_SPEED_FALLBACK_INTERVAL__ = null;
+    window.__LTDF_SPEED_ACTIVE__ = false;
+    window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+    window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "destroy", href: location.href, at: Date.now() }};
     return {{ ok:true, status:"DESTROYED", reason:reason || "destroy" }};
   }}
 
-  window.__LTDF_SNIPER_DESTROY__ = destroy;
+  window.__LTDF_SPEED_DESTROY__ = destroy;
 
-  if (window.__LTDF_SNIPER_ACTIVE__) {{
-    console.log("[LTDF] Sniper ja ativo nesta aba.");
+  if (window.__LTDF_SPEED_ACTIVE__) {{
+    console.log("[LTDF] Injetor ja operando nesta aba.");
     return {{ ok:true, status:"JA_ATIVO", href:location.href }};
   }}
 
   destroy("pre_inject_cleanup");
-  window.__LTDF_SNIPER_ACTIVE__ = true;
-  window.__LTDF_SNIPER_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SNIPER_VERSION__ = "reactive_inputs_geometric_standby_v1";
+  window.__LTDF_SPEED_ACTIVE__ = true;
+  window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+  window.__LTDF_SPEED_VERSION__ = "reactive_inputs_dynamic_lookup_v1";
 
-  console.log("[LTDF] Injetor acoplado com sucesso. Aguardando fim do loading...");
+  console.log("[LTDF] Injetor acoplado. Aguardando fim do loading...");
 
   function visible(el) {{
     if (!el || !el.isConnected) return false;
@@ -174,58 +180,57 @@ class LTDFReactiveInjector:
     const current = findSpinButton();
     if (enabled(current)) {{
       dispatchNativeClick(current);
-      window.__LTDF_SNIPER_LAST_CLICK__ = {{ source:source || "ready", at:Date.now() }};
+      window.__LTDF_SPEED_LAST_CLICK__ = {{ source:source || "ready", at:Date.now() }};
     }}
   }}
 
-  function ligarMotorSpeed(botaoGirar) {{
-    if (window.__LTDF_SNIPER_MOTOR_ACTIVE__) return false;
-    if (!visible(botaoGirar)) return false;
-    window.__LTDF_SNIPER_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Jogo 100% pronto. Ligando motor reativo de cliques...");
+  function ativarMotorSpeed() {{
+    if (window.__LTDF_SPEED_MOTOR_ACTIVE__) return false;
+    window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
+    console.log("[LTDF] Motor Turbo Reativo acionado com busca dinamica.");
 
-    try {{ if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect(); }} catch (_) {{}}
+    try {{ if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect(); }} catch (_) {{}}
     maybeEnableTurbo();
 
     const root = document.body || document.documentElement;
     if (!root) return false;
 
-    window.__LTDF_SNIPER_OBSERVER__ = new MutationObserver(() => {{
+    window.__LTDF_SPEED_OBSERVER__ = new MutationObserver(() => {{
       clickIfReady("mutation_ready");
     }});
 
-    window.__LTDF_SNIPER_OBSERVER__.observe(root, {{
+    window.__LTDF_SPEED_OBSERVER__.observe(root, {{
       childList:true,
       subtree:true,
       attributes:true,
       attributeFilter:["class", "disabled"]
     }});
 
-    try {{ if (window.__LTDF_SNIPER_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SNIPER_FALLBACK_INTERVAL__); }} catch (_) {{}}
-    window.__LTDF_SNIPER_FALLBACK_INTERVAL__ = setInterval(() => {{
+    try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
+    window.__LTDF_SPEED_FALLBACK_INTERVAL__ = setInterval(() => {{
       clickIfReady("watchdog_passive");
     }}, CONFIG.watchdogMs);
 
     clickIfReady("motor_start");
-    window.__LTDF_SNIPER_READY__ = {{ at:Date.now(), href:location.href }};
+    window.__LTDF_SPEED_READY__ = {{ at:Date.now(), href:location.href }};
     return true;
   }}
 
   function waitForGameReady() {{
     try {{ if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
     window.__LTDF_CHECK_INTERVAL__ = setInterval(() => {{
-      const botao = findSpinButton();
-      if (!visible(botao)) return;
+      const botaoValidacao = findSpinButton();
+      if (!visible(botaoValidacao)) return;
       try {{ clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
       window.__LTDF_CHECK_INTERVAL__ = null;
-      ligarMotorSpeed(botao);
+      ativarMotorSpeed();
     }}, CONFIG.pollMs);
   }}
 
   waitForGameReady();
 
   window.addEventListener("beforeunload", () => destroy("beforeunload"), {{ once:true }});
-  return {{ ok:true, status:"STANDBY_ANTI_FREEZE_ATIVADO", pollMs:CONFIG.pollMs, watchdogMs:CONFIG.watchdogMs, href:location.href }};
+  return {{ ok:true, status:"STANDBY_OK", pollMs:CONFIG.pollMs, watchdogMs:CONFIG.watchdogMs, href:location.href }};
 }})();
 """.strip()
 
