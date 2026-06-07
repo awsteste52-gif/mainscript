@@ -275,7 +275,7 @@ class LTDFReactiveInjector:
                 pre_state = driver.execute_script(
                     """
                     const alreadyReloaded = !!arguments[0];
-                    const firstRun = window.__LTDF_SPEED_CONTAINER__ === undefined && !alreadyReloaded;
+                    const firstRun = window.__LTDF_SPEED_CONTAINER__ === undefined;
                     if (window.__LTDF_INITIALIZED__ === undefined) window.__LTDF_INITIALIZED__ = true;
                     return {
                       firstRun,
