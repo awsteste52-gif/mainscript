@@ -35,7 +35,6 @@ class LTDFReactiveConfig:
     dom_timeout_seconds: int = 30
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
-    watchdog_interval_ms: int = 30
     iframe_scan_depth: int = 2
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
@@ -273,6 +272,8 @@ class LTDFReactiveInjector:
               window.__LTDF_SPEED_OBSERVER__ = null;
               if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__);
               window.__LTDF_SPEED_FALLBACK_INTERVAL__ = null;
+              if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__);
+              window.__LTDF_SPEED_RAF_ID__ = null;
               window.__LTDF_SPEED_ACTIVE__ = false;
               if (window.__LTDF_SNIPER_OBSERVER__) window.__LTDF_SNIPER_OBSERVER__.disconnect();
               window.__LTDF_SNIPER_OBSERVER__ = null;
@@ -295,7 +296,6 @@ class LTDFReactiveInjector:
 
   const CONFIG = {{
     pollMs: {int(self.config.loading_poll_ms)},
-    watchdogMs: {int(self.config.watchdog_interval_ms)},
     selectors: {{
       spinButton: {selectors.spin_button!r},
       turboButton: {selectors.turbo_button!r}
@@ -309,6 +309,8 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_OBSERVER__ = null;
     try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
     window.__LTDF_SPEED_FALLBACK_INTERVAL__ = null;
+    try {{ if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__); }} catch (_) {{}}
+    window.__LTDF_SPEED_RAF_ID__ = null;
     window.__LTDF_SPEED_ACTIVE__ = false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
     window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "destroy", href: location.href, at: Date.now() }};
@@ -338,6 +340,7 @@ class LTDFReactiveInjector:
   function dispatchNativeClick(el) {{
     if (!el || !el.isConnected) return false;
     const rect = el.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return false;
     const clientX = Math.round(rect.left + rect.width / 2);
     const clientY = Math.round(rect.top + rect.height / 2);
     const opts = {{
@@ -423,10 +426,14 @@ class LTDFReactiveInjector:
       attributes:true
     }});
 
-    try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
-    window.__LTDF_SPEED_FALLBACK_INTERVAL__ = setInterval(() => {{
-      clickIfReady("reactive_interval_30ms");
-    }}, CONFIG.watchdogMs);
+    try {{ if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__); }} catch (_) {{}}
+    const loopExecucaoRapida = () => {{
+      clickIfReady("raf_loop");
+      if (window.__LTDF_SPEED_ACTIVE__) {{
+        window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
+      }}
+    }};
+    window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
 
     clickIfReady("motor_start");
     window.__LTDF_SPEED_READY__ = {{ at:Date.now(), href:location.href }};
@@ -453,7 +460,7 @@ class LTDFReactiveInjector:
   waitForGameReady();
 
   window.addEventListener("beforeunload", () => destroy("beforeunload"), {{ once:true }});
-  return {{ ok:true, status:"STANDBY_OK", pollMs:CONFIG.pollMs, watchdogMs:CONFIG.watchdogMs, href:location.href }};
+  return {{ ok:true, status:"STANDBY_OK", pollMs:CONFIG.pollMs, loopMode:"requestAnimationFrame", href:location.href }};
 }})();
 """.strip()
 
