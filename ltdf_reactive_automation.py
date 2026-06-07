@@ -252,7 +252,7 @@ class LTDFReactiveInjector:
         def wait_reloaded_game_ready(path: list[int]) -> dict[str, Any]:
             """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
 
-            time.sleep(2.0)
+            time.sleep(4.5)
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
                 try:
@@ -769,7 +769,6 @@ class LTDFReactiveInjector:
       configurable: true
     }});
   }} catch (_) {{}}
-  window.Date = LTDFTimeHook;
 
   const customTimeout = function(callback, delay, ...args) {{
     return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / currentSpeed()), ...args);
