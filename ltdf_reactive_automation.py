@@ -335,15 +335,8 @@ class LTDFReactiveInjector:
     return !!((el.offsetWidth > 0 || rect.width > 0) && (el.offsetHeight > 0 || rect.height > 0));
   }}
 
-  function enabled(el) {{
-    if (!visible(el)) return false;
-    if (el.disabled || el.hasAttribute("disabled")) return false;
-    if (el.getAttribute("aria-disabled") === "true") return false;
-    return true;
-  }}
-
   function dispatchNativeClick(el) {{
-    if (!enabled(el)) return false;
+    if (!el || !el.isConnected) return false;
     const rect = el.getBoundingClientRect();
     const clientX = Math.round(rect.left + rect.width / 2);
     const clientY = Math.round(rect.top + rect.height / 2);
@@ -396,14 +389,14 @@ class LTDFReactiveInjector:
 
   function maybeEnableTurbo() {{
     const turbo = findTurboButton();
-    if (enabled(turbo) && !(turbo.classList && turbo.classList.contains("active"))) {{
+    if (turbo && !(turbo.classList && turbo.classList.contains("active"))) {{
       dispatchNativeClick(turbo);
     }}
   }}
 
   function clickIfReady(source) {{
     const current = findSpinButton();
-    if (enabled(current)) {{
+    if (current) {{
       dispatchNativeClick(current);
       window.__LTDF_SPEED_LAST_CLICK__ = {{ source:source || "ready", at:Date.now() }};
     }}
