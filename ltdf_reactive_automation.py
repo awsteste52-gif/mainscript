@@ -410,7 +410,13 @@ class LTDFReactiveInjector:
     try {{ if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
     window.__LTDF_CHECK_INTERVAL__ = setInterval(() => {{
       const botaoValidacao = findSpinButton();
-      if (!visible(botaoValidacao)) return;
+      const rect = botaoValidacao && botaoValidacao.getBoundingClientRect ? botaoValidacao.getBoundingClientRect() : null;
+      const renderizado = !!(botaoValidacao && (
+        botaoValidacao.offsetWidth > 0 ||
+        botaoValidacao.offsetHeight > 0 ||
+        (rect && (rect.width > 0 || rect.height > 0))
+      ));
+      if (!renderizado) return;
       try {{ clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
       window.__LTDF_CHECK_INTERVAL__ = null;
       ativarMotorSpeed();
