@@ -341,39 +341,26 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "time_hook_click_sync_v2";
+  window.__LTDF_SPEED_VERSION__ = "time_hook_sem_recursao_blindado_v3";
 
   const DateOriginal = window.__LTDF_NATIVE_DATE__ || window.Date;
-  const performanceNowOriginal = window.__LTDF_NATIVE_PERF_NOW__ ||
-    (window.performance && typeof window.performance.now === "function" ? window.performance.now.bind(window.performance) : null);
   const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
   const setIntervalOriginal = window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window);
   const clearIntervalOriginal = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window);
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
-  window.__LTDF_NATIVE_PERF_NOW__ = performanceNowOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
 
   const dataInicioReal = DateOriginal.now();
-  const perfInicioReal = performanceNowOriginal ? performanceNowOriginal() : 0;
   let ultimoVirtualDate = dataInicioReal;
-  let ultimoVirtualPerf = perfInicioReal;
 
   function virtualDateNow() {{
     const tempoRealAtual = DateOriginal.now();
     const delta = Math.max(0, tempoRealAtual - dataInicioReal);
     ultimoVirtualDate = Math.max(ultimoVirtualDate + 0.001, dataInicioReal + (delta * MULTIPLICADOR_SPEED));
     return Math.floor(ultimoVirtualDate);
-  }}
-
-  function virtualPerfNow() {{
-    if (!performanceNowOriginal) return virtualDateNow();
-    const tempoRealAtual = performanceNowOriginal();
-    const delta = Math.max(0, tempoRealAtual - perfInicioReal);
-    ultimoVirtualPerf = Math.max(ultimoVirtualPerf + 0.001, perfInicioReal + (delta * MULTIPLICADOR_SPEED));
-    return ultimoVirtualPerf;
   }}
 
   class LTDFTimeHook extends DateOriginal {{
@@ -405,16 +392,6 @@ class LTDFReactiveInjector:
     }});
   }} catch (_) {{}}
   window.Date = LTDFTimeHook;
-
-  if (window.performance && performanceNowOriginal) {{
-    try {{
-      Object.defineProperty(window.performance, "now", {{
-        value: virtualPerfNow,
-        configurable: true,
-        writable: true
-      }});
-    }} catch (_) {{}}
-  }}
 
   window.setTimeout = function(callback, delay, ...args) {{
     return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
@@ -451,7 +428,7 @@ class LTDFReactiveInjector:
     try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
     try {{ el.dispatchEvent(new PointerEvent("pointerup", {{ ...parametrosEvent, buttons:0, pointerId:1, pointerType:"mouse", isPrimary:true }})); }} catch (_) {{}}
     try {{ el.dispatchEvent(new MouseEvent("click", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
-    window.__LTDF_SPEED_LAST_CLICK__ = {{ at: virtualDateNow(), perf: virtualPerfNow(), x: clientX, y: clientY }};
+    window.__LTDF_SPEED_LAST_CLICK__ = {{ at: virtualDateNow(), x: clientX, y: clientY }};
     return true;
   }}
 
@@ -459,7 +436,7 @@ class LTDFReactiveInjector:
     if (motorIniciado) return false;
     motorIniciado = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor Grafico e Hook de Tempo Sincronizados!");
+    console.log("[LTDF] Motor Grafico e Hook de Tempo Sincronizados com Sucesso!");
 
     const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
     if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
@@ -492,7 +469,7 @@ class LTDFReactiveInjector:
 
   return {{
     ok:true,
-    status:"TIME_HOOK_AND_SPEED_OK",
+    status:"TIME_HOOK_ESTAVEL_OK",
     href:location.href,
     multiplier:MULTIPLICADOR_SPEED,
     pollMs:POLL_MS
