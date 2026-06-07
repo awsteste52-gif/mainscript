@@ -249,7 +249,113 @@ class LTDFReactiveInjector:
                 time.sleep(0.5)
             return {"ready": False, "readyState": last_state, "attempts": 5}
 
-        def wait_reloaded_game_ready(path: list[int]) -> dict[str, Any]:
+        def capture_frame_hint(path: list[int]) -> dict[str, Any]:
+            if not path:
+                return {"index": "root"}
+            parent_path = path[:-1]
+            target_index = path[-1]
+            hint: dict[str, Any] = {"index": target_index, "parentPath": parent_path}
+            try:
+                if not self._switch_to_frame_path(driver, parent_path):
+                    return hint
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                if target_index >= len(frames):
+                    hint["frameCount"] = len(frames)
+                    return hint
+                frame = frames[target_index]
+                for attr in ("src", "name", "id", "title"):
+                    hint[attr] = str(frame.get_attribute(attr) or "")
+                hint["frameCount"] = len(frames)
+            except Exception as exc:
+                hint["error"] = str(exc)
+            finally:
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+            return hint
+
+        def switch_to_frame_path_or_hint(path: list[int], frame_hint: dict[str, Any]) -> dict[str, Any]:
+            if not path:
+                try:
+                    driver.switch_to.default_content()
+                    return {"ok": True, "mode": "root"}
+                except Exception as exc:
+                    return {"ok": False, "mode": "root", "error": str(exc)}
+            parent_path = list(frame_hint.get("parentPath") or path[:-1])
+            target_index = int(frame_hint.get("index") if isinstance(frame_hint.get("index"), int) else path[-1])
+            hint_src = str(frame_hint.get("src") or "").lower()
+            hint_name = str(frame_hint.get("name") or "").lower()
+            hint_id = str(frame_hint.get("id") or "").lower()
+            hint_title = str(frame_hint.get("title") or "").lower()
+
+            def score_frame(frame: Any) -> int:
+                try:
+                    src = str(frame.get_attribute("src") or "").lower()
+                    name = str(frame.get_attribute("name") or "").lower()
+                    frame_id = str(frame.get_attribute("id") or "").lower()
+                    title = str(frame.get_attribute("title") or "").lower()
+                except Exception:
+                    return 0
+                score = 0
+                if hint_src and src == hint_src:
+                    score += 100
+                elif hint_src and (hint_src in src or src in hint_src):
+                    score += 70
+                if hint_name and name == hint_name:
+                    score += 25
+                if hint_id and frame_id == hint_id:
+                    score += 25
+                if hint_title and title == hint_title:
+                    score += 10
+                if is_game_url(src):
+                    score += 15
+                return score
+
+            try:
+                if not self._switch_to_frame_path(driver, parent_path):
+                    return {"ok": False, "mode": "parent_unavailable", "path": path, "parentPath": parent_path}
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                if target_index < len(frames):
+                    indexed_score = score_frame(frames[target_index])
+                    if indexed_score > 0 or not any((hint_src, hint_name, hint_id, hint_title)):
+                        driver.switch_to.frame(frames[target_index])
+                        return {
+                            "ok": True,
+                            "mode": "path",
+                            "path": [*parent_path, target_index],
+                            "score": indexed_score,
+                            "frameCount": len(frames),
+                        }
+                best_frame = None
+                best_score = -1
+                best_index = -1
+                for index, frame in enumerate(frames):
+                    score = score_frame(frame)
+                    if score > best_score:
+                        best_frame = frame
+                        best_score = score
+                        best_index = index
+                if best_frame is None or best_score <= 0:
+                    return {
+                        "ok": False,
+                        "mode": "hint_not_found",
+                        "path": path,
+                        "parentPath": parent_path,
+                        "frameCount": len(frames),
+                    }
+                driver.switch_to.frame(best_frame)
+                return {
+                    "ok": True,
+                    "mode": "hint",
+                    "path": [*parent_path, best_index],
+                    "score": best_score,
+                    "frameCount": len(frames),
+                }
+            except Exception as exc:
+                return {"ok": False, "mode": "hint_error", "path": path, "error": str(exc)}
+
+        def wait_reloaded_game_ready(path: list[int], frame_hint: dict[str, Any]) -> dict[str, Any]:
             """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
 
             try:
@@ -260,8 +366,14 @@ class LTDFReactiveInjector:
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
                 try:
-                    if not self._switch_to_frame_path(driver, path):
-                        last_info = {"ready": False, "attempts": attempt, "error": "frame_not_available"}
+                    switch_info = switch_to_frame_path_or_hint(path, frame_hint)
+                    if not switch_info.get("ok"):
+                        last_info = {
+                            "ready": False,
+                            "attempts": attempt,
+                            "error": "frame_not_available",
+                            "switchInfo": switch_info,
+                        }
                     else:
                         last_info = driver.execute_script(
                             """
@@ -298,6 +410,7 @@ class LTDFReactiveInjector:
                             """
                         ) or {}
                         last_info["attempts"] = attempt
+                        last_info["switchInfo"] = switch_info
                         if last_info.get("ready"):
                             return last_info
                 except Exception as exc:
@@ -330,6 +443,7 @@ class LTDFReactiveInjector:
                     ) or {}
                 except Exception:
                     root_state = {"frameKey": frame_key, "alreadyReloaded": False}
+                frame_hint = capture_frame_hint(path)
                 if not self._switch_to_frame_path(driver, path):
                     return False
                 ready_info = wait_current_context_ready()
@@ -374,7 +488,7 @@ class LTDFReactiveInjector:
                         reload_sent = True
                         self.logger.info("LTDF lazy injection: reload estrutural enviado para frame %s.", frame_key)
                         driver.switch_to.default_content()
-                        ready_info = wait_reloaded_game_ready(path)
+                        ready_info = wait_reloaded_game_ready(path, frame_hint)
                         if not ready_info.get("ready"):
                             self.logger.debug(
                                 "LTDF lazy injection: frame %s ainda sem Canvas/WebGL pronto: %s",
@@ -396,7 +510,8 @@ class LTDFReactiveInjector:
                             payload["href"] = pre_state.get("href")
                             injections.append(payload)
                             return True
-                        if not self._switch_to_frame_path(driver, path):
+                        switch_info = switch_to_frame_path_or_hint(path, frame_hint)
+                        if not switch_info.get("ok"):
                             return True
                         post_state = driver.execute_script(
                             """
@@ -407,6 +522,7 @@ class LTDFReactiveInjector:
                             };
                             """
                         ) or {}
+                        post_state["switchInfo"] = switch_info
                         pre_state.update(post_state)
                     except Exception as reload_exc:
                         payload = {
