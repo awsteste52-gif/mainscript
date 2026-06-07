@@ -249,6 +249,63 @@ class LTDFReactiveInjector:
                 time.sleep(0.5)
             return {"ready": False, "readyState": last_state, "attempts": 5}
 
+        def wait_reloaded_game_ready(path: list[int]) -> dict[str, Any]:
+            """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
+
+            time.sleep(2.0)
+            last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
+            for attempt in range(1, 9):
+                try:
+                    if not self._switch_to_frame_path(driver, path):
+                        last_info = {"ready": False, "attempts": attempt, "error": "frame_not_available"}
+                    else:
+                        last_info = driver.execute_script(
+                            """
+                            const canvases = Array.from(document.querySelectorAll("canvas"));
+                            const visibleCanvas = canvases.some((canvas) => {
+                              const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+                              const cssReady = !!(rect && rect.width > 0 && rect.height > 0);
+                              const backingReady = Number(canvas.width || 0) > 0 && Number(canvas.height || 0) > 0;
+                              return cssReady && backingReady;
+                            });
+                            let webglReady = false;
+                            for (const canvas of canvases) {
+                              try {
+                                const context =
+                                  canvas.getContext("webgl2") ||
+                                  canvas.getContext("webgl") ||
+                                  canvas.getContext("experimental-webgl");
+                                if (context && typeof context.getParameter === "function") {
+                                  webglReady = true;
+                                  break;
+                                }
+                              } catch (_) {}
+                            }
+                            const readyState = String(document.readyState || "");
+                            const domReady = readyState === "interactive" || readyState === "complete";
+                            return {
+                              ready: domReady && (visibleCanvas || webglReady),
+                              readyState,
+                              domReady,
+                              visibleCanvas,
+                              webglReady,
+                              canvasCount: canvases.length
+                            };
+                            """
+                        ) or {}
+                        last_info["attempts"] = attempt
+                        if last_info.get("ready"):
+                            return last_info
+                except Exception as exc:
+                    last_info = {"ready": False, "attempts": attempt, "error": str(exc)}
+                finally:
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+            return last_info
+
         def inject_current(path: list[int], reason: dict[str, Any]) -> bool:
             pre_state: dict[str, Any] = {}
             reload_sent = False
@@ -312,10 +369,30 @@ class LTDFReactiveInjector:
                         )
                         reload_sent = True
                         self.logger.info("LTDF lazy injection: reload estrutural enviado para frame %s.", frame_key)
-                        time.sleep(2.5)
+                        ready_info = wait_reloaded_game_ready(path)
+                        if not ready_info.get("ready"):
+                            self.logger.debug(
+                                "LTDF lazy injection: frame %s ainda sem Canvas/WebGL pronto: %s",
+                                frame_key,
+                                ready_info,
+                            )
+                            payload = {
+                                "ok": False,
+                                "status": "IFRAME_RELOAD_WAITING_CANVAS",
+                                "iframeReloadSent": True,
+                            }
+                            payload["framePath"] = list(path)
+                            payload["frameKey"] = frame_key
+                            payload["frameScore"] = 1200 if not path else 1100
+                            payload["frameReason"] = reason
+                            payload["readyInfo"] = ready_info
+                            payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
+                            payload["iframeReloadDone"] = True
+                            payload["href"] = pre_state.get("href")
+                            injections.append(payload)
+                            return True
                         if not self._switch_to_frame_path(driver, path):
                             return True
-                        ready_info = wait_current_context_ready()
                         post_state = driver.execute_script(
                             """
                             return {
