@@ -60,48 +60,24 @@ class LTDFReactiveInjector:
         self.wait_for_dom(driver)
         self.logger.info("Injetando motor reativo LTDF.")
         script = self._build_script()
-        reload_result = self._maybe_arm_preload_and_reload(driver, script)
-        if reload_result is not None:
-            return reload_result
+        preload_armed = self._arm_document_start_preload(driver, script)
         result = self._inject_in_game_context(driver, script)
         if isinstance(result, dict):
+            result["preloadArmed"] = preload_armed
             self.logger.info("Motor reativo LTDF: %s", result.get("status", "sem_status"))
             return result
-        return {"ok": bool(result), "status": str(result)}
+        return {"ok": bool(result), "status": str(result), "preloadArmed": preload_armed}
 
-    def _maybe_arm_preload_and_reload(self, driver: webdriver.Chrome, script: str) -> dict[str, Any] | None:
-        """Arm the Time-Hook at document-start once when activation happens late."""
+    def _arm_document_start_preload(self, driver: webdriver.Chrome, script: str) -> bool:
+        """Arm the Time-Hook at document-start without reloading the root page."""
 
         if float(self.config.speed_multiplier or 1.0) <= 1.0:
-            return None
+            return False
 
         try:
             driver.switch_to.default_content()
         except Exception:
-            return None
-
-        try:
-            state = driver.execute_script(
-                """
-                const reloadKey = "ltdf_time_hook_reload_done";
-                let reloadDone = false;
-                try { reloadDone = window.sessionStorage.getItem(reloadKey) === "1"; } catch (_) {}
-                const initialized = window.__LTDF_INITIALIZED__ === true;
-                if (!initialized) window.__LTDF_INITIALIZED__ = true;
-                return {
-                  initialized,
-                  reloadDone,
-                  shouldReload: !reloadDone,
-                  href: String(location.href || "")
-                };
-                """
-            ) or {}
-        except Exception as exc:
-            self.logger.debug("Falha ao avaliar estado de inicializacao LTDF: %s", exc)
-            return None
-
-        if not bool(state.get("shouldReload")):
-            return None
+            return False
 
         try:
             driver.execute_cdp_cmd("Page.enable", {})
@@ -116,40 +92,10 @@ class LTDFReactiveInjector:
                 "Page.addScriptToEvaluateOnNewDocument",
                 {"source": script + "\n//# sourceURL=ltdf_time_hook_document_start.js"},
             )
-            preload_armed = True
+            return True
         except Exception as exc:
-            preload_armed = False
             self.logger.debug("Falha ao armar preloader LTDF via CDP: %s", exc)
-
-        initial_result = self._inject_in_game_context(driver, script)
-
-        try:
-            driver.switch_to.default_content()
-            driver.execute_script(
-                """
-                try { window.sessionStorage.setItem("ltdf_time_hook_reload_done", "1"); } catch (_) {}
-                window.__LTDF_INITIALIZED__ = true;
-                window.location.reload();
-                return true;
-                """
-            )
-            reload_sent = True
-        except Exception as exc:
-            reload_sent = False
-            self.logger.debug("Falha ao solicitar reload controlado LTDF: %s", exc)
-
-        result = {
-            "ok": bool(preload_armed or initial_result),
-            "status": "DOCUMENT_START_RELOAD_TRIGGERED" if reload_sent else "DOCUMENT_START_PRELOAD_ARMED",
-            "preloadArmed": preload_armed,
-            "reloadSent": reload_sent,
-            "initialized": bool(state.get("initialized")),
-            "reloadDone": bool(state.get("reloadDone")),
-            "initialInjection": initial_result,
-            "href": state.get("href"),
-        }
-        self.logger.info("Motor reativo LTDF: %s", result["status"])
-        return result
+            return False
 
     def _probe_current_context(self, driver: webdriver.Chrome, path: list[int]) -> dict[str, Any]:
         """Score the active frame so injection lands inside the actual game DOM."""
@@ -280,12 +226,45 @@ class LTDFReactiveInjector:
             return any(token in value for token in ("pgsoft-games", "pgsoft", "game", "loader"))
 
         def inject_current(path: list[int], reason: dict[str, Any]) -> None:
+            pre_state: dict[str, Any] = {}
             try:
+                pre_state = driver.execute_script(
+                    """
+                    const reloadKey = "ltdf_time_hook_iframe_reload_done";
+                    let reloadDone = false;
+                    try { reloadDone = window.sessionStorage.getItem(reloadKey) === "1"; } catch (_) {}
+                    const firstRun = window.__LTDF_SPEED_ACTIVE__ === undefined && !reloadDone;
+                    if (window.__LTDF_INITIALIZED__ === undefined) window.__LTDF_INITIALIZED__ = true;
+                    return {
+                      firstRun,
+                      reloadDone,
+                      href: String(location.href || "")
+                    };
+                    """
+                ) or {}
                 result = driver.execute_script(script)
                 payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
                 payload["framePath"] = list(path)
                 payload["frameScore"] = 1200 if not path else 1100
                 payload["frameReason"] = reason
+                payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
+                payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
+                payload["href"] = pre_state.get("href")
+                if bool(pre_state.get("firstRun")):
+                    try:
+                        driver.execute_script(
+                            """
+                            try { window.sessionStorage.setItem("ltdf_time_hook_iframe_reload_done", "1"); } catch (_) {}
+                            window.__LTDF_INITIALIZED__ = true;
+                            window.location.reload();
+                            return true;
+                            """
+                        )
+                        payload["iframeReloadSent"] = True
+                        payload["status"] = "IFRAME_RELOAD_TRIGGERED"
+                    except Exception as reload_exc:
+                        payload["iframeReloadSent"] = False
+                        payload["iframeReloadError"] = str(reload_exc)
                 injections.append(payload)
             except Exception as exc:
                 self.logger.debug("Falha ao injetar LTDF em path %s: %s", path, exc)
@@ -350,6 +329,7 @@ class LTDFReactiveInjector:
             "ok": True,
             "status": "MULTITARGET_IFRAME_OK",
             "injections": len(injections),
+            "iframeReloads": sum(1 for item in injections if item.get("iframeReloadSent")),
             "targets": injections,
             "framePath": [item.get("framePath") for item in injections],
             "frameScore": max(int(item.get("frameScore") or 0) for item in injections),

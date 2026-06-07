@@ -4553,7 +4553,9 @@ class BrowserRunner:
                 reactive_result = injetar_motor_ltdf(driver, multiplier=speed_multiplier)
                 self._log(
                     f"Motor LTDF Time-Hook: status={reactive_result.get('status')} "
-                    f"mult={reactive_result.get('multiplier')} frame={reactive_result.get('framePath')}",
+                    f"mult={reactive_result.get('multiplier')} "
+                    f"reloads={reactive_result.get('iframeReloads', 0)} "
+                    f"frame={reactive_result.get('framePath')}",
                     level="INFO",
                 )
             elif speed_multiplier <= 1.0:
