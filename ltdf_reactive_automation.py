@@ -35,7 +35,7 @@ class LTDFReactiveConfig:
     dom_timeout_seconds: int = 30
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
-    watchdog_interval_ms: int = 1500
+    watchdog_interval_ms: int = 30
     iframe_scan_depth: int = 2
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
@@ -339,16 +339,55 @@ class LTDFReactiveInjector:
     if (!visible(el)) return false;
     if (el.disabled || el.hasAttribute("disabled")) return false;
     if (el.getAttribute("aria-disabled") === "true") return false;
-    if (el.classList && el.classList.contains("disabled")) return false;
+    if (el.classList && (
+      el.classList.contains("disabled") ||
+      el.classList.contains("disable") ||
+      el.classList.contains("spinning")
+    )) return false;
     return true;
   }}
 
   function dispatchNativeClick(el) {{
     if (!enabled(el)) return false;
-    const opts = {{ bubbles:true, cancelable:true, composed:true, view:window }};
+    const rect = el.getBoundingClientRect();
+    const clientX = Math.round(rect.left + rect.width / 2);
+    const clientY = Math.round(rect.top + rect.height / 2);
+    const opts = {{
+      bubbles:true,
+      cancelable:true,
+      composed:true,
+      view:window,
+      clientX,
+      clientY,
+      screenX:clientX,
+      screenY:clientY,
+      button:0,
+      buttons:1
+    }};
+    try {{
+      el.dispatchEvent(new PointerEvent("pointerdown", {{
+        ...opts,
+        pointerId:1,
+        pointerType:"mouse",
+        isPrimary:true
+      }}));
+    }} catch (_) {{
+      try {{ el.dispatchEvent(new MouseEvent("pointerdown", opts)); }} catch (_) {{}}
+    }}
     try {{ el.dispatchEvent(new MouseEvent("mousedown", opts)); }} catch (_) {{}}
-    try {{ el.dispatchEvent(new MouseEvent("mouseup", opts)); }} catch (_) {{}}
-    try {{ el.dispatchEvent(new MouseEvent("click", opts)); }} catch (_) {{}}
+    try {{
+      el.dispatchEvent(new PointerEvent("pointerup", {{
+        ...opts,
+        buttons:0,
+        pointerId:1,
+        pointerType:"mouse",
+        isPrimary:true
+      }}));
+    }} catch (_) {{
+      try {{ el.dispatchEvent(new MouseEvent("pointerup", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
+    }}
+    try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new MouseEvent("click", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
     return true;
   }}
 
@@ -398,7 +437,7 @@ class LTDFReactiveInjector:
 
     try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
     window.__LTDF_SPEED_FALLBACK_INTERVAL__ = setInterval(() => {{
-      clickIfReady("watchdog_passive");
+      clickIfReady("reactive_interval_30ms");
     }}, CONFIG.watchdogMs);
 
     clickIfReady("motor_start");
