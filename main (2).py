@@ -84,6 +84,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 try:
+    from ltdf_reactive_automation import injetar_motor_ltdf
+except Exception:
+    injetar_motor_ltdf = None
+
+try:
     from pywinauto import Desktop
 except Exception:
     Desktop = None
@@ -4537,6 +4542,38 @@ class BrowserRunner:
                 """,
                 config,
             )
+        try:
+            enabled_speed = bool(config.get("enabled"))
+            speed_multiplier = float(config.get("speed", 1.0) or 1.0) if enabled_speed else 1.0
+            if injetar_motor_ltdf is not None and speed_multiplier > 1.0:
+                self._log(
+                    f"Speed HTML5: injetando motor Time-Hook sincronizado multiplicador={speed_multiplier:.2f}.",
+                    level="INFO",
+                )
+                reactive_result = injetar_motor_ltdf(driver, multiplier=speed_multiplier)
+                self._log(
+                    f"Motor LTDF Time-Hook: status={reactive_result.get('status')} "
+                    f"mult={reactive_result.get('multiplier')} frame={reactive_result.get('framePath')}",
+                    level="INFO",
+                )
+            elif speed_multiplier <= 1.0:
+                try:
+                    cleanup_result = driver.execute_script(
+                        """
+                        if (typeof window.__LTDF_SPEED_DESTROY__ === 'function') {
+                          return window.__LTDF_SPEED_DESTROY__('speed_disabled');
+                        }
+                        window.__LTDF_SPEED_ACTIVE__ = false;
+                        return { ok:true, status:'NO_ACTIVE_TIME_HOOK' };
+                        """
+                    ) or {}
+                    self._log(f"Motor LTDF Time-Hook em repouso: {cleanup_result.get('status')}", level="INFO")
+                except Exception:
+                    pass
+            elif injetar_motor_ltdf is None:
+                self._log("Motor LTDF Time-Hook indisponivel; usando fallback nativo/JS atual.", level="WARN")
+        except Exception as exc:
+            self._log(f"Motor LTDF Time-Hook falhou: {exc}", level="WARN")
         try:
             self._log("Speed HTML5 driver etapa: tentando turbo nativo e clique pronto.", level="INFO")
             native = self._activate_native_turbo_on_driver(driver)

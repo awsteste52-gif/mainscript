@@ -1,9 +1,8 @@
 """LTDF reactive input automation helper.
 
-This module keeps the post-Speed architecture focused on operational
-stability: DOM readiness, singleton injection, lightweight polling, dynamic
-element lookup, and clean teardown. It does not manipulate clocks or try to
-accelerate a server-side tick rate.
+This module injects the Speed engine into the active game context. The current
+engine combines DOM readiness, dynamic iframe targeting, virtual time hooks,
+and synchronized native click dispatch.
 """
 
 from __future__ import annotations
@@ -36,6 +35,7 @@ class LTDFReactiveConfig:
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
     iframe_scan_depth: int = 2
+    speed_multiplier: float = 4.0
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
 
@@ -290,184 +290,212 @@ class LTDFReactiveInjector:
 
     def _build_script(self) -> str:
         selectors = self.config.selectors
+        multiplier = max(1.0, min(10.0, float(self.config.speed_multiplier or 1.0)))
         return f"""
 (function() {{
   "use strict";
 
-  const CONFIG = {{
-    pollMs: {int(self.config.loading_poll_ms)},
-    selectors: {{
-      spinButton: {selectors.spin_button!r},
-      turboButton: {selectors.turbo_button!r}
-    }}
+  const MULTIPLICADOR_SPEED = {multiplier!r};
+  const POLL_MS = {int(self.config.loading_poll_ms)};
+  const SELETORES = {{
+    botaoGirar: {selectors.spin_button!r},
+    botaoTurbo: {selectors.turbo_button!r}
   }};
 
-  function destroy(reason) {{
-    try {{ if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
+  function cleanup(reason) {{
+    try {{
+      const nativeClearInterval = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval;
+      if (window.__LTDF_CHECK_INTERVAL__) nativeClearInterval(window.__LTDF_CHECK_INTERVAL__);
+    }} catch (_) {{}}
     window.__LTDF_CHECK_INTERVAL__ = null;
-    try {{ if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect(); }} catch (_) {{}}
-    window.__LTDF_SPEED_OBSERVER__ = null;
-    try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
-    window.__LTDF_SPEED_FALLBACK_INTERVAL__ = null;
     try {{ if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__); }} catch (_) {{}}
     window.__LTDF_SPEED_RAF_ID__ = null;
     window.__LTDF_SPEED_ACTIVE__ = false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-    window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "destroy", href: location.href, at: Date.now() }};
-    return {{ ok:true, status:"DESTROYED", reason:reason || "destroy" }};
+    try {{ if (window.__LTDF_NATIVE_DATE__) window.Date = window.__LTDF_NATIVE_DATE__; }} catch (_) {{}}
+    try {{
+      if (window.__LTDF_NATIVE_PERF_NOW__ && window.performance) {{
+        Object.defineProperty(window.performance, "now", {{
+          value: window.__LTDF_NATIVE_PERF_NOW__,
+          configurable: true,
+          writable: true
+        }});
+      }}
+    }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_SET_TIMEOUT__) window.setTimeout = window.__LTDF_NATIVE_SET_TIMEOUT__; }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_SET_INTERVAL__) window.setInterval = window.__LTDF_NATIVE_SET_INTERVAL__; }} catch (_) {{}}
+    window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "cleanup", href: location.href, at: Date.now() }};
+    return {{ ok:true, status:"DESTROYED", reason:reason || "cleanup" }};
   }}
 
-  window.__LTDF_SPEED_DESTROY__ = destroy;
-
+  window.__LTDF_SPEED_DESTROY__ = cleanup;
   if (window.__LTDF_SPEED_ACTIVE__) {{
-    console.log("[LTDF] Injetor ja operando nesta aba.");
-    return {{ ok:true, status:"JA_ATIVO", href:location.href }};
+    console.log("[LTDF] Injetor de tempo e clique ja ativo.");
+    cleanup("reinject_time_hook");
   }}
 
-  destroy("pre_inject_cleanup");
+  if (MULTIPLICADOR_SPEED <= 1.0) {{
+    cleanup("speed_1x");
+    return {{ ok:true, status:"SPEED_1X_STANDBY", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+  }}
+
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "reactive_inputs_dynamic_lookup_v1";
+  window.__LTDF_SPEED_VERSION__ = "time_hook_click_sync_v2";
 
-  console.log("[LTDF] Injetor acoplado. Aguardando fim do loading...");
+  const DateOriginal = window.__LTDF_NATIVE_DATE__ || window.Date;
+  const performanceNowOriginal = window.__LTDF_NATIVE_PERF_NOW__ ||
+    (window.performance && typeof window.performance.now === "function" ? window.performance.now.bind(window.performance) : null);
+  const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
+  const setIntervalOriginal = window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window);
+  const clearIntervalOriginal = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window);
 
-  function visible(el) {{
-    if (!el || !el.isConnected) return false;
-    const rect = el.getBoundingClientRect();
-    return !!((el.offsetWidth > 0 || rect.width > 0) && (el.offsetHeight > 0 || rect.height > 0));
+  window.__LTDF_NATIVE_DATE__ = DateOriginal;
+  window.__LTDF_NATIVE_PERF_NOW__ = performanceNowOriginal;
+  window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
+  window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
+  window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
+
+  const dataInicioReal = DateOriginal.now();
+  const perfInicioReal = performanceNowOriginal ? performanceNowOriginal() : 0;
+  let ultimoVirtualDate = dataInicioReal;
+  let ultimoVirtualPerf = perfInicioReal;
+
+  function virtualDateNow() {{
+    const tempoRealAtual = DateOriginal.now();
+    const delta = Math.max(0, tempoRealAtual - dataInicioReal);
+    ultimoVirtualDate = Math.max(ultimoVirtualDate + 0.001, dataInicioReal + (delta * MULTIPLICADOR_SPEED));
+    return Math.floor(ultimoVirtualDate);
   }}
 
-  function dispatchNativeClick(el) {{
+  function virtualPerfNow() {{
+    if (!performanceNowOriginal) return virtualDateNow();
+    const tempoRealAtual = performanceNowOriginal();
+    const delta = Math.max(0, tempoRealAtual - perfInicioReal);
+    ultimoVirtualPerf = Math.max(ultimoVirtualPerf + 0.001, perfInicioReal + (delta * MULTIPLICADOR_SPEED));
+    return ultimoVirtualPerf;
+  }}
+
+  window.Date = function() {{
+    if (arguments.length === 0) return new DateOriginal(virtualDateNow());
+    return new DateOriginal(...arguments);
+  }};
+  window.Date.prototype = DateOriginal.prototype;
+  Object.setPrototypeOf(window.Date, DateOriginal);
+  window.Date.now = virtualDateNow;
+
+  if (window.performance && performanceNowOriginal) {{
+    try {{
+      Object.defineProperty(window.performance, "now", {{
+        value: virtualPerfNow,
+        configurable: true,
+        writable: true
+      }});
+    }} catch (_) {{}}
+  }}
+
+  window.setTimeout = function(callback, delay, ...args) {{
+    return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
+  }};
+
+  window.setInterval = function(callback, delay, ...args) {{
+    return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
+  }};
+
+  let motorIniciado = false;
+
+  function dispararCliqueNativo(el) {{
     if (!el || !el.isConnected) return false;
     const rect = el.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return false;
-    const clientX = Math.round(rect.left + rect.width / 2);
-    const clientY = Math.round(rect.top + rect.height / 2);
-    const opts = {{
-      bubbles:true,
-      cancelable:true,
-      composed:true,
-      view:window,
+
+    const clientX = rect.left + (rect.width / 2);
+    const clientY = rect.top + (rect.height / 2);
+    const parametrosEvent = {{
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
       clientX,
       clientY,
-      screenX:clientX,
-      screenY:clientY,
-      button:0,
-      buttons:1
+      screenX: clientX,
+      screenY: clientY,
+      button: 0,
+      buttons: 1
     }};
-    try {{
-      el.dispatchEvent(new PointerEvent("pointerdown", {{
-        ...opts,
-        pointerId:1,
-        pointerType:"mouse",
-        isPrimary:true
-      }}));
-    }} catch (_) {{
-      try {{ el.dispatchEvent(new MouseEvent("pointerdown", opts)); }} catch (_) {{}}
-    }}
-    try {{ el.dispatchEvent(new MouseEvent("mousedown", opts)); }} catch (_) {{}}
-    try {{
-      el.dispatchEvent(new PointerEvent("pointerup", {{
-        ...opts,
-        buttons:0,
-        pointerId:1,
-        pointerType:"mouse",
-        isPrimary:true
-      }}));
-    }} catch (_) {{
-      try {{ el.dispatchEvent(new MouseEvent("pointerup", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
-    }}
-    try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
-    try {{ el.dispatchEvent(new MouseEvent("click", {{ ...opts, buttons:0 }})); }} catch (_) {{}}
+
+    try {{ el.dispatchEvent(new MouseEvent("mousedown", parametrosEvent)); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new PointerEvent("pointerdown", {{ ...parametrosEvent, pointerId:1, pointerType:"mouse", isPrimary:true }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new PointerEvent("pointerup", {{ ...parametrosEvent, buttons:0, pointerId:1, pointerType:"mouse", isPrimary:true }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new MouseEvent("click", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
+    window.__LTDF_SPEED_LAST_CLICK__ = {{ at: virtualDateNow(), perf: virtualPerfNow(), x: clientX, y: clientY }};
     return true;
   }}
 
-  function findSpinButton() {{
-    return document.querySelector(CONFIG.selectors.spinButton);
-  }}
-
-  function findTurboButton() {{
-    return document.querySelector(CONFIG.selectors.turboButton);
-  }}
-
-  function maybeEnableTurbo() {{
-    const turbo = findTurboButton();
-    if (turbo && !(turbo.classList && turbo.classList.contains("active"))) {{
-      dispatchNativeClick(turbo);
-    }}
-  }}
-
-  function clickIfReady(source) {{
-    const current = findSpinButton();
-    if (current) {{
-      dispatchNativeClick(current);
-      window.__LTDF_SPEED_LAST_CLICK__ = {{ source:source || "ready", at:Date.now() }};
-    }}
-  }}
-
   function ativarMotorSpeed() {{
-    if (window.__LTDF_SPEED_MOTOR_ACTIVE__) return false;
+    if (motorIniciado) return false;
+    motorIniciado = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor de Alta Performance Sincronizado com a GPU Ativado.");
+    console.log("[LTDF] Motor Grafico e Hook de Tempo Sincronizados!");
 
-    try {{ if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect(); }} catch (_) {{}}
-    maybeEnableTurbo();
+    const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
+    if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
+      dispararCliqueNativo(btnTurbo);
+    }}
 
-    const root = document.body || document.documentElement;
-    if (!root) return false;
-
-    window.__LTDF_SPEED_OBSERVER__ = new MutationObserver(() => {{
-      clickIfReady("mutation_ready");
-    }});
-
-    window.__LTDF_SPEED_OBSERVER__.observe(root, {{
-      childList:true,
-      subtree:true,
-      attributes:true
-    }});
-
-    try {{ if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__); }} catch (_) {{}}
     const loopExecucaoRapida = () => {{
-      clickIfReady("raf_loop");
+      const btnAtual = document.querySelector(SELETORES.botaoGirar);
+      if (btnAtual) dispararCliqueNativo(btnAtual);
       if (window.__LTDF_SPEED_ACTIVE__) {{
         window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
       }}
     }};
     window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
-
-    clickIfReady("motor_start");
-    window.__LTDF_SPEED_READY__ = {{ at:Date.now(), href:location.href }};
     return true;
   }}
 
-  function waitForGameReady() {{
-    try {{ if (window.__LTDF_CHECK_INTERVAL__) clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
-    window.__LTDF_CHECK_INTERVAL__ = setInterval(() => {{
-      const botaoValidacao = findSpinButton();
-      const rect = botaoValidacao && botaoValidacao.getBoundingClientRect ? botaoValidacao.getBoundingClientRect() : null;
-      const renderizado = !!(botaoValidacao && (
-        botaoValidacao.offsetWidth > 0 ||
-        botaoValidacao.offsetHeight > 0 ||
-        (rect && (rect.width > 0 || rect.height > 0))
-      ));
-      if (!renderizado) return;
-      try {{ clearInterval(window.__LTDF_CHECK_INTERVAL__); }} catch (_) {{}}
+  window.__LTDF_CHECK_INTERVAL__ = setIntervalOriginal(() => {{
+    const botaoValidacao = document.querySelector(SELETORES.botaoGirar);
+    if (botaoValidacao && (botaoValidacao.offsetWidth > 0 || botaoValidacao.getBoundingClientRect().width > 0)) {{
+      clearIntervalOriginal(window.__LTDF_CHECK_INTERVAL__);
       window.__LTDF_CHECK_INTERVAL__ = null;
       ativarMotorSpeed();
-    }}, CONFIG.pollMs);
-  }}
+    }}
+  }}, POLL_MS);
 
-  waitForGameReady();
+  window.addEventListener("beforeunload", () => {{
+    window.__LTDF_SPEED_ACTIVE__ = false;
+  }}, {{ once:true }});
 
-  window.addEventListener("beforeunload", () => destroy("beforeunload"), {{ once:true }});
-  return {{ ok:true, status:"STANDBY_OK", pollMs:CONFIG.pollMs, loopMode:"requestAnimationFrame", href:location.href }};
+  return {{
+    ok:true,
+    status:"TIME_HOOK_AND_SPEED_OK",
+    href:location.href,
+    multiplier:MULTIPLICADOR_SPEED,
+    pollMs:POLL_MS
+  }};
 }})();
 """.strip()
 
 
-def injetar_motor_ltdf(driver: webdriver.Chrome, config: LTDFReactiveConfig | None = None) -> dict[str, Any]:
+def injetar_motor_ltdf(
+    driver: webdriver.Chrome,
+    config: LTDFReactiveConfig | None = None,
+    multiplier: float | None = None,
+) -> dict[str, Any]:
     """Compatibility helper for the existing operational flow."""
 
+    if multiplier is not None:
+        base = config or LTDFReactiveConfig()
+        config = LTDFReactiveConfig(
+            dom_timeout_seconds=base.dom_timeout_seconds,
+            loading_poll_ms=base.loading_poll_ms,
+            observer_cooldown_ms=base.observer_cooldown_ms,
+            iframe_scan_depth=base.iframe_scan_depth,
+            speed_multiplier=float(multiplier),
+            selectors=base.selectors,
+        )
     return LTDFReactiveInjector(config=config).inject(driver)
 
 
