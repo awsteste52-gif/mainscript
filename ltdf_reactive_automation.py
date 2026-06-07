@@ -408,7 +408,7 @@ class LTDFReactiveInjector:
   function ativarMotorSpeed() {{
     if (window.__LTDF_SPEED_MOTOR_ACTIVE__) return false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor Turbo Reativo acionado com busca dinamica.");
+    console.log("[LTDF] Motor de Alta Performance Sincronizado com a GPU Ativado.");
 
     try {{ if (window.__LTDF_SPEED_OBSERVER__) window.__LTDF_SPEED_OBSERVER__.disconnect(); }} catch (_) {{}}
     maybeEnableTurbo();
