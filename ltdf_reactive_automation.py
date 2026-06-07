@@ -60,11 +60,96 @@ class LTDFReactiveInjector:
         self.wait_for_dom(driver)
         self.logger.info("Injetando motor reativo LTDF.")
         script = self._build_script()
+        reload_result = self._maybe_arm_preload_and_reload(driver, script)
+        if reload_result is not None:
+            return reload_result
         result = self._inject_in_game_context(driver, script)
         if isinstance(result, dict):
             self.logger.info("Motor reativo LTDF: %s", result.get("status", "sem_status"))
             return result
         return {"ok": bool(result), "status": str(result)}
+
+    def _maybe_arm_preload_and_reload(self, driver: webdriver.Chrome, script: str) -> dict[str, Any] | None:
+        """Arm the Time-Hook at document-start once when activation happens late."""
+
+        if float(self.config.speed_multiplier or 1.0) <= 1.0:
+            return None
+
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            return None
+
+        try:
+            state = driver.execute_script(
+                """
+                const reloadKey = "ltdf_time_hook_reload_done";
+                let reloadDone = false;
+                try { reloadDone = window.sessionStorage.getItem(reloadKey) === "1"; } catch (_) {}
+                const initialized = window.__LTDF_INITIALIZED__ === true;
+                if (!initialized) window.__LTDF_INITIALIZED__ = true;
+                return {
+                  initialized,
+                  reloadDone,
+                  shouldReload: !reloadDone,
+                  href: String(location.href || "")
+                };
+                """
+            ) or {}
+        except Exception as exc:
+            self.logger.debug("Falha ao avaliar estado de inicializacao LTDF: %s", exc)
+            return None
+
+        if not bool(state.get("shouldReload")):
+            return None
+
+        try:
+            driver.execute_cdp_cmd("Page.enable", {})
+        except Exception:
+            pass
+        try:
+            driver.execute_cdp_cmd("Runtime.enable", {})
+        except Exception:
+            pass
+        try:
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": script + "\n//# sourceURL=ltdf_time_hook_document_start.js"},
+            )
+            preload_armed = True
+        except Exception as exc:
+            preload_armed = False
+            self.logger.debug("Falha ao armar preloader LTDF via CDP: %s", exc)
+
+        initial_result = self._inject_in_game_context(driver, script)
+
+        try:
+            driver.switch_to.default_content()
+            driver.execute_script(
+                """
+                try { window.sessionStorage.setItem("ltdf_time_hook_reload_done", "1"); } catch (_) {}
+                window.__LTDF_INITIALIZED__ = true;
+                window.location.reload();
+                return true;
+                """
+            )
+            reload_sent = True
+        except Exception as exc:
+            reload_sent = False
+            self.logger.debug("Falha ao solicitar reload controlado LTDF: %s", exc)
+
+        result = {
+            "ok": bool(preload_armed or initial_result),
+            "status": "DOCUMENT_START_RELOAD_TRIGGERED" if reload_sent else "DOCUMENT_START_PRELOAD_ARMED",
+            "preloadArmed": preload_armed,
+            "reloadSent": reload_sent,
+            "initialized": bool(state.get("initialized")),
+            "reloadDone": bool(state.get("reloadDone")),
+            "initialInjection": initial_result,
+            "href": state.get("href"),
+        }
+        self.logger.info("Motor reativo LTDF: %s", result["status"])
+        return result
 
     def _probe_current_context(self, driver: webdriver.Chrome, path: list[int]) -> dict[str, Any]:
         """Score the active frame so injection lands inside the actual game DOM."""
