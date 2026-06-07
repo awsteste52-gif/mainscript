@@ -202,8 +202,7 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_OBSERVER__.observe(root, {{
       childList:true,
       subtree:true,
-      attributes:true,
-      attributeFilter:["class", "disabled"]
+      attributes:true
     }});
 
     try {{ if (window.__LTDF_SPEED_FALLBACK_INTERVAL__) clearInterval(window.__LTDF_SPEED_FALLBACK_INTERVAL__); }} catch (_) {{}}
