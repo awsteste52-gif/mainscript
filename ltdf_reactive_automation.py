@@ -35,7 +35,6 @@ class LTDFReactiveConfig:
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
     watchdog_interval_ms: int = 1500
-    click_burst: int = 3
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
 
@@ -100,7 +99,6 @@ class LTDFReactiveInjector:
   const CONFIG = {{
     pollMs: {int(self.config.loading_poll_ms)},
     watchdogMs: {int(self.config.watchdog_interval_ms)},
-    clickBurst: {int(self.config.click_burst)},
     selectors: {{
       spinButton: {selectors.spin_button!r},
       turboButton: {selectors.turbo_button!r}
@@ -172,22 +170,12 @@ class LTDFReactiveInjector:
     }}
   }}
 
-  function clickBurst(source) {{
-    const count = Math.max(1, Math.min(3, CONFIG.clickBurst || 1));
-    for (let i = 0; i < count; i += 1) {{
-      setTimeout(() => {{
-        const current = findSpinButton();
-        if (enabled(current)) {{
-          dispatchNativeClick(current);
-          window.__LTDF_SNIPER_LAST_CLICK__ = {{ source:source || "observer", index:i, at:Date.now() }};
-        }}
-      }}, i * 8);
-    }}
-  }}
-
   function clickIfReady(source) {{
     const current = findSpinButton();
-    if (enabled(current)) clickBurst(source || "ready");
+    if (enabled(current)) {{
+      dispatchNativeClick(current);
+      window.__LTDF_SNIPER_LAST_CLICK__ = {{ source:source || "ready", at:Date.now() }};
+    }}
   }}
 
   function ligarMotorSpeed(botaoGirar) {{
