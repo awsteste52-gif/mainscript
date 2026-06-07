@@ -339,11 +339,6 @@ class LTDFReactiveInjector:
     if (!visible(el)) return false;
     if (el.disabled || el.hasAttribute("disabled")) return false;
     if (el.getAttribute("aria-disabled") === "true") return false;
-    if (el.classList && (
-      el.classList.contains("disabled") ||
-      el.classList.contains("disable") ||
-      el.classList.contains("spinning")
-    )) return false;
     return true;
   }}
 
