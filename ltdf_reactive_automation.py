@@ -61,7 +61,7 @@ class LTDFReactiveInjector:
         self.wait_for_dom(driver)
         self.logger.info("Injetando motor reativo LTDF.")
         script = self._build_script()
-        preload_armed = self._arm_document_start_preload(driver, script)
+        preload_armed = False
         result = self._inject_in_game_context(driver, script)
         if isinstance(result, dict):
             result["preloadArmed"] = preload_armed
@@ -285,16 +285,6 @@ class LTDFReactiveInjector:
                     """,
                     bool(root_state.get("alreadyReloaded")),
                 ) or {}
-                result = driver.execute_script(script)
-                payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
-                payload["framePath"] = list(path)
-                payload["frameKey"] = frame_key
-                payload["frameScore"] = 1200 if not path else 1100
-                payload["frameReason"] = reason
-                payload["readyInfo"] = ready_info
-                payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
-                payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
-                payload["href"] = pre_state.get("href")
                 if bool(pre_state.get("firstRun")) and float(self.config.speed_multiplier or 1.0) > 1.0:
                     try:
                         driver.switch_to.default_content()
@@ -312,7 +302,7 @@ class LTDFReactiveInjector:
                             frame_key,
                         )
                         if not self._switch_to_frame_path(driver, path):
-                            return
+                            return True
                         driver.execute_script(
                             """
                             window.__LTDF_INITIALIZED__ = true;
@@ -320,12 +310,50 @@ class LTDFReactiveInjector:
                             return true;
                             """
                         )
-                        payload["iframeReloadSent"] = True
-                        payload["status"] = "IFRAME_RELOAD_TRIGGERED"
                         reload_sent = True
+                        self.logger.info("LTDF lazy injection: reload estrutural enviado para frame %s.", frame_key)
+                        time.sleep(2.5)
+                        if not self._switch_to_frame_path(driver, path):
+                            return True
+                        ready_info = wait_current_context_ready()
+                        post_state = driver.execute_script(
+                            """
+                            return {
+                              firstRun: window.__LTDF_SPEED_CONTAINER__ === undefined,
+                              reloadDone: true,
+                              href: String(location.href || "")
+                            };
+                            """
+                        ) or {}
+                        pre_state.update(post_state)
                     except Exception as reload_exc:
-                        payload["iframeReloadSent"] = False
-                        payload["iframeReloadError"] = str(reload_exc)
+                        payload = {
+                            "ok": False,
+                            "status": "IFRAME_RELOAD_FAILED",
+                            "iframeReloadSent": False,
+                            "iframeReloadError": str(reload_exc),
+                        }
+                        payload["framePath"] = list(path)
+                        payload["frameKey"] = frame_key
+                        payload["frameScore"] = 1200 if not path else 1100
+                        payload["frameReason"] = reason
+                        payload["readyInfo"] = ready_info
+                        payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
+                        payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
+                        payload["href"] = pre_state.get("href")
+                        injections.append(payload)
+                        return reload_sent
+                result = driver.execute_script(script)
+                payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
+                payload["framePath"] = list(path)
+                payload["frameKey"] = frame_key
+                payload["frameScore"] = 1200 if not path else 1100
+                payload["frameReason"] = reason
+                payload["readyInfo"] = ready_info
+                payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
+                payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
+                payload["iframeReloadSent"] = reload_sent
+                payload["href"] = pre_state.get("href")
                 injections.append(payload)
             except Exception as exc:
                 self.logger.debug("Falha ao injetar LTDF em path %s: %s", path, exc)
