@@ -376,13 +376,35 @@ class LTDFReactiveInjector:
     return ultimoVirtualPerf;
   }}
 
-  window.Date = function() {{
-    if (arguments.length === 0) return new DateOriginal(virtualDateNow());
-    return new DateOriginal(...arguments);
-  }};
-  window.Date.prototype = DateOriginal.prototype;
-  Object.setPrototypeOf(window.Date, DateOriginal);
-  window.Date.now = virtualDateNow;
+  class LTDFTimeHook extends DateOriginal {{
+    constructor(...args) {{
+      if (args.length === 0) {{
+        super(virtualDateNow());
+      }} else {{
+        super(...args);
+      }}
+    }}
+
+    static now() {{
+      return virtualDateNow();
+    }}
+
+    static parse(...args) {{
+      return DateOriginal.parse(...args);
+    }}
+
+    static UTC(...args) {{
+      return DateOriginal.UTC(...args);
+    }}
+  }}
+
+  try {{
+    Object.defineProperty(LTDFTimeHook, "name", {{
+      value: "Date",
+      configurable: true
+    }});
+  }} catch (_) {{}}
+  window.Date = LTDFTimeHook;
 
   if (window.performance && performanceNowOriginal) {{
     try {{
