@@ -490,6 +490,13 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_ACTIVE__ = false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
     window.__LTDF_SPEED_CONTAINER__ = null;
+    try {{
+      const native = window.__LTDF_NATIVOS__ || {{}};
+      if (native.Date) window.Date = native.Date;
+      if (native.setTimeout) window.setTimeout = native.setTimeout;
+      if (native.setInterval) window.setInterval = native.setInterval;
+      if (native.rAF) window.requestAnimationFrame = native.rAF;
+    }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_DATE__) window.Date = window.__LTDF_NATIVE_DATE__; }} catch (_) {{}}
     try {{
       if (window.__LTDF_NATIVE_PERF_NOW__ && window.performance) {{
@@ -508,16 +515,42 @@ class LTDFReactiveInjector:
   }}
 
   window.__LTDF_SPEED_DESTROY__ = cleanup;
+  if (!window.__LTDF_NATIVOS__) {{
+    window.__LTDF_NATIVOS__ = {{
+      Date: window.__LTDF_NATIVE_DATE__ || window.Date,
+      DateNow: (window.__LTDF_NATIVE_DATE__ || window.Date).now,
+      setTimeout: window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window),
+      setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
+      clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
+      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window)
+    }};
+  }}
+
   if (window.__LTDF_SPEED_CONTAINER__) {{
     window.__LTDF_SPEED_CONTAINER__.multiplicador = MULTIPLICADOR_SPEED;
-    window.__LTDF_SPEED_ACTIVE__ = MULTIPLICADOR_SPEED > 1.0;
-    window.__LTDF_SPEED_MOTOR_ACTIVE__ = MULTIPLICADOR_SPEED > 1.0 && !!window.__LTDF_SPEED_MOTOR_ACTIVE__;
     if (MULTIPLICADOR_SPEED <= 1.0) {{
-      cleanup("speed_disabled_dynamic_update");
-      return {{ ok:true, status:"SPEED_DISABLED", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+      window.__LTDF_SPEED_ACTIVE__ = false;
+      window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+      try {{
+        window.Date = window.__LTDF_NATIVOS__.Date;
+        window.Date.now = window.__LTDF_NATIVOS__.DateNow;
+        window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
+        window.setInterval = window.__LTDF_NATIVOS__.setInterval;
+        window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
+      }} catch (_) {{}}
+      console.log("[LTDF] Sistema restaurado para a velocidade normal de fabrica.");
+      return {{ ok:true, status:"SPEED_RESTORED_TO_NORMAL", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+    }}
+    window.__LTDF_SPEED_ACTIVE__ = true;
+    window.__LTDF_SPEED_MOTOR_ACTIVE__ = !!window.__LTDF_SPEED_MOTOR_ACTIVE__;
+    if (window.__LTDF_MODIFICADOS__) {{
+      window.Date = window.__LTDF_MODIFICADOS__.Date;
+      window.setTimeout = window.__LTDF_MODIFICADOS__.setTimeout;
+      window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
+      window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
     }}
     console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
-    return {{ ok:true, status:"SPEED_ATUALIZADO", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+    return {{ ok:true, status:"SPEED_UPDATED_DYNAMICALLY", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
   }}
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
@@ -535,11 +568,11 @@ class LTDFReactiveInjector:
   window.__LTDF_SPEED_VERSION__ = "dynamic_speed_container_v5";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
-  const DateOriginal = window.__LTDF_NATIVE_DATE__ || window.Date;
-  const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
-  const setIntervalOriginal = window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window);
-  const clearIntervalOriginal = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window);
-  const rAF_Nativo = window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window);
+  const DateOriginal = window.__LTDF_NATIVOS__.Date;
+  const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
+  const setIntervalOriginal = window.__LTDF_NATIVOS__.setInterval;
+  const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
+  const rAF_Nativo = window.__LTDF_NATIVOS__.rAF;
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
@@ -594,21 +627,35 @@ class LTDFReactiveInjector:
   }} catch (_) {{}}
   window.Date = LTDFTimeHook;
 
-  window.setTimeout = function(callback, delay, ...args) {{
+  const customTimeout = function(callback, delay, ...args) {{
     return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / currentSpeed()), ...args);
   }};
 
-  window.setInterval = function(callback, delay, ...args) {{
+  const customInterval = function(callback, delay, ...args) {{
     return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / currentSpeed()), ...args);
   }};
 
-  window.requestAnimationFrame = function(callback) {{
+  const customRAF = function(callback) {{
     return rAF_Nativo(function(timestamp) {{
       if (typeof callback === "function") {{
         callback(timestamp * currentSpeed());
       }}
     }});
   }};
+
+  window.__LTDF_MODIFICADOS__ = {{
+    Date: LTDFTimeHook,
+    setTimeout: customTimeout,
+    setInterval: customInterval,
+    rAF: customRAF
+  }};
+
+  if (window.__LTDF_SPEED_ACTIVE__) {{
+    window.Date = LTDFTimeHook;
+    window.setTimeout = customTimeout;
+    window.setInterval = customInterval;
+    window.requestAnimationFrame = customRAF;
+  }}
 
   let motorIniciado = false;
 
@@ -684,7 +731,7 @@ class LTDFReactiveInjector:
 
   return {{
     ok:true,
-    status:"TIME_AND_GRAPHIC_HOOK_INITIALIZED",
+    status:"DYNAMIC_SPEED_ENGINE_READY",
     href:location.href,
     multiplier:MULTIPLICADOR_SPEED,
     pollMs:POLL_MS
