@@ -252,7 +252,7 @@ class LTDFReactiveInjector:
         def wait_reloaded_game_ready(path: list[int]) -> dict[str, Any]:
             """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
 
-            time.sleep(4.5)
+            time.sleep(5.0)
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
                 try:
@@ -724,9 +724,8 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAF_Nativo;
 
-  const dataInicioReal = DateOriginal.now();
-  let tempoInjetadoAcumulado = dataInicioReal;
-  let ultimoCheckReal = dataInicioReal;
+  let ultimoCheckReal = DateOriginal.now();
+  let tempoInjetadoAcumulado = ultimoCheckReal;
 
   function currentSpeed() {{
     const raw = window.__LTDF_SPEED_CONTAINER__ ? Number(window.__LTDF_SPEED_CONTAINER__.multiplicador) : 1.0;
