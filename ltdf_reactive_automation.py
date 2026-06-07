@@ -252,6 +252,10 @@ class LTDFReactiveInjector:
         def wait_reloaded_game_ready(path: list[int]) -> dict[str, Any]:
             """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
 
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
             time.sleep(5.0)
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
@@ -369,6 +373,7 @@ class LTDFReactiveInjector:
                         )
                         reload_sent = True
                         self.logger.info("LTDF lazy injection: reload estrutural enviado para frame %s.", frame_key)
+                        driver.switch_to.default_content()
                         ready_info = wait_reloaded_game_ready(path)
                         if not ready_info.get("ready"):
                             self.logger.debug(
