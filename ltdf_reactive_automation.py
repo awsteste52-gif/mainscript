@@ -522,6 +522,32 @@ class LTDFReactiveInjector:
     return {{ ok:true, status:"DESTROYED", reason:reason || "cleanup" }};
   }}
 
+  function teardownBeforeUnload() {{
+    try {{
+      const native = window.__LTDF_NATIVOS__ || {{}};
+      const nativeClearTimeout = native.clearTimeout || window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout;
+      const nativeClearInterval = native.clearInterval || window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval;
+      if (window.__LTDF_CHECK_INTERVAL__) {{
+        if (typeof window.__LTDF_CHECK_INTERVAL__ === "object" && window.__LTDF_CHECK_INTERVAL__.id) {{
+          nativeClearTimeout(window.__LTDF_CHECK_INTERVAL__.id);
+        }} else {{
+          nativeClearInterval(window.__LTDF_CHECK_INTERVAL__);
+        }}
+      }}
+      window.__LTDF_CHECK_INTERVAL__ = null;
+      if (window.__LTDF_SPEED_RAF_ID__) cancelAnimationFrame(window.__LTDF_SPEED_RAF_ID__);
+      window.__LTDF_SPEED_RAF_ID__ = null;
+      window.__LTDF_SPEED_ACTIVE__ = false;
+      window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+      if (native.Date) window.Date = native.Date;
+      if (native.DateNow && window.Date) window.Date.now = native.DateNow;
+      if (native.setTimeout) window.setTimeout = native.setTimeout;
+      if (native.setInterval) window.setInterval = native.setInterval;
+      if (native.clearInterval) window.clearInterval = native.clearInterval;
+      if (native.rAF) window.requestAnimationFrame = native.rAF;
+    }} catch (_) {{}}
+  }}
+
   window.__LTDF_SPEED_DESTROY__ = cleanup;
   if (!window.__LTDF_NATIVOS__) {{
     window.__LTDF_NATIVOS__ = {{
@@ -761,7 +787,7 @@ class LTDFReactiveInjector:
   }}, Math.max(250, POLL_MS));
 
   window.addEventListener("beforeunload", () => {{
-    window.__LTDF_SPEED_ACTIVE__ = false;
+    teardownBeforeUnload();
   }}, {{ once:true }});
 
   return {{
