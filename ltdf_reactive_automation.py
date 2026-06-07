@@ -249,8 +249,9 @@ class LTDFReactiveInjector:
                 time.sleep(0.5)
             return {"ready": False, "readyState": last_state, "attempts": 5}
 
-        def inject_current(path: list[int], reason: dict[str, Any]) -> None:
+        def inject_current(path: list[int], reason: dict[str, Any]) -> bool:
             pre_state: dict[str, Any] = {}
+            reload_sent = False
             try:
                 frame_key = ".".join(str(item) for item in path) if path else "root"
                 try:
@@ -269,7 +270,7 @@ class LTDFReactiveInjector:
                 except Exception:
                     root_state = {"frameKey": frame_key, "alreadyReloaded": False}
                 if not self._switch_to_frame_path(driver, path):
-                    return
+                    return False
                 ready_info = wait_current_context_ready()
                 pre_state = driver.execute_script(
                     """
@@ -321,6 +322,7 @@ class LTDFReactiveInjector:
                         )
                         payload["iframeReloadSent"] = True
                         payload["status"] = "IFRAME_RELOAD_TRIGGERED"
+                        reload_sent = True
                     except Exception as reload_exc:
                         payload["iframeReloadSent"] = False
                         payload["iframeReloadError"] = str(reload_exc)
@@ -332,6 +334,7 @@ class LTDFReactiveInjector:
                     driver.switch_to.default_content()
                 except Exception:
                     pass
+            return reload_sent
 
         try:
             current_url = str(getattr(driver, "current_url", "") or "").lower()
@@ -375,9 +378,13 @@ class LTDFReactiveInjector:
                     except Exception:
                         pass
 
+                child_reloaded = False
                 if is_game_url(src) and self._switch_to_frame_path(driver, child_path):
-                    inject_current(child_path, {"iframeSrc": src[:180], "multiTarget": True})
+                    child_reloaded = inject_current(child_path, {"iframeSrc": src[:180], "multiTarget": True})
 
+                if child_reloaded:
+                    time.sleep(0.5)
+                    continue
                 scan_frame_tree(child_path, depth - 1)
 
         scan_frame_tree([], int(self.config.iframe_scan_depth))
