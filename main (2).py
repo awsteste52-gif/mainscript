@@ -4545,9 +4545,9 @@ class BrowserRunner:
         try:
             enabled_speed = bool(config.get("enabled"))
             speed_multiplier = float(config.get("speed", 1.0) or 1.0) if enabled_speed else 1.0
-            if injetar_motor_ltdf is not None and speed_multiplier > 1.0:
+            if injetar_motor_ltdf is not None:
                 self._log(
-                    f"Speed HTML5: injetando motor Time-Hook sincronizado multiplicador={speed_multiplier:.2f}.",
+                    f"Speed HTML5: sincronizando motor dinamico multiplicador={speed_multiplier:.2f}.",
                     level="INFO",
                 )
                 reactive_result = injetar_motor_ltdf(driver, multiplier=speed_multiplier)

@@ -275,7 +275,7 @@ class LTDFReactiveInjector:
                 pre_state = driver.execute_script(
                     """
                     const alreadyReloaded = !!arguments[0];
-                    const firstRun = window.__LTDF_SPEED_ACTIVE__ === undefined && !alreadyReloaded;
+                    const firstRun = window.__LTDF_SPEED_CONTAINER__ === undefined && !alreadyReloaded;
                     if (window.__LTDF_INITIALIZED__ === undefined) window.__LTDF_INITIALIZED__ = true;
                     return {
                       firstRun,
@@ -295,7 +295,7 @@ class LTDFReactiveInjector:
                 payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
                 payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
                 payload["href"] = pre_state.get("href")
-                if bool(pre_state.get("firstRun")):
+                if bool(pre_state.get("firstRun")) and float(self.config.speed_multiplier or 1.0) > 1.0:
                     try:
                         driver.switch_to.default_content()
                         driver.execute_script(
@@ -489,6 +489,7 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_RAF_ID__ = null;
     window.__LTDF_SPEED_ACTIVE__ = false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+    window.__LTDF_SPEED_CONTAINER__ = null;
     try {{ if (window.__LTDF_NATIVE_DATE__) window.Date = window.__LTDF_NATIVE_DATE__; }} catch (_) {{}}
     try {{
       if (window.__LTDF_NATIVE_PERF_NOW__ && window.performance) {{
@@ -507,9 +508,21 @@ class LTDFReactiveInjector:
   }}
 
   window.__LTDF_SPEED_DESTROY__ = cleanup;
+  if (window.__LTDF_SPEED_CONTAINER__) {{
+    window.__LTDF_SPEED_CONTAINER__.multiplicador = MULTIPLICADOR_SPEED;
+    window.__LTDF_SPEED_ACTIVE__ = MULTIPLICADOR_SPEED > 1.0;
+    window.__LTDF_SPEED_MOTOR_ACTIVE__ = MULTIPLICADOR_SPEED > 1.0 && !!window.__LTDF_SPEED_MOTOR_ACTIVE__;
+    if (MULTIPLICADOR_SPEED <= 1.0) {{
+      cleanup("speed_disabled_dynamic_update");
+      return {{ ok:true, status:"SPEED_DISABLED", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+    }}
+    console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
+    return {{ ok:true, status:"SPEED_ATUALIZADO", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
+  }}
+
   if (window.__LTDF_SPEED_ACTIVE__) {{
-    console.log("[LTDF] Injetor de tempo e clique ja ativo.");
-    cleanup("reinject_time_hook");
+    console.log("[LTDF] Injetor legado ativo; reiniciando para container dinamico.");
+    cleanup("legacy_reinject_dynamic_container");
   }}
 
   if (MULTIPLICADOR_SPEED <= 1.0) {{
@@ -519,7 +532,8 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "time_and_graphic_hook_v4";
+  window.__LTDF_SPEED_VERSION__ = "dynamic_speed_container_v5";
+  window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const DateOriginal = window.__LTDF_NATIVE_DATE__ || window.Date;
   const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
@@ -534,13 +548,20 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_RAF__ = rAF_Nativo;
 
   const dataInicioReal = DateOriginal.now();
-  let ultimoVirtualDate = dataInicioReal;
+  let tempoInjetadoAcumulado = dataInicioReal;
+  let ultimoCheckReal = dataInicioReal;
+
+  function currentSpeed() {{
+    const raw = window.__LTDF_SPEED_CONTAINER__ ? Number(window.__LTDF_SPEED_CONTAINER__.multiplicador) : 1.0;
+    return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
+  }}
 
   function virtualDateNow() {{
-    const tempoRealAtual = DateOriginal.now();
-    const delta = Math.max(0, tempoRealAtual - dataInicioReal);
-    ultimoVirtualDate = Math.max(ultimoVirtualDate + 0.001, dataInicioReal + (delta * MULTIPLICADOR_SPEED));
-    return Math.floor(ultimoVirtualDate);
+    const agoraReal = DateOriginal.now();
+    const deltaReal = Math.max(0, agoraReal - ultimoCheckReal);
+    ultimoCheckReal = agoraReal;
+    tempoInjetadoAcumulado += deltaReal * currentSpeed();
+    return Math.floor(tempoInjetadoAcumulado);
   }}
 
   class LTDFTimeHook extends DateOriginal {{
@@ -574,17 +595,17 @@ class LTDFReactiveInjector:
   window.Date = LTDFTimeHook;
 
   window.setTimeout = function(callback, delay, ...args) {{
-    return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
+    return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / currentSpeed()), ...args);
   }};
 
   window.setInterval = function(callback, delay, ...args) {{
-    return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
+    return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / currentSpeed()), ...args);
   }};
 
   window.requestAnimationFrame = function(callback) {{
     return rAF_Nativo(function(timestamp) {{
       if (typeof callback === "function") {{
-        callback(timestamp * MULTIPLICADOR_SPEED);
+        callback(timestamp * currentSpeed());
       }}
     }});
   }};
@@ -624,16 +645,22 @@ class LTDFReactiveInjector:
     if (motorIniciado) return false;
     motorIniciado = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor Grafico, Hook de Tempo e Renderizadores Sincronizados!");
-
-    const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
-    if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
-      dispararCliqueNativo(btnTurbo);
-    }}
+    console.log("[LTDF] Motor de aceleracao de hardware sincronizado!");
 
     const loopExecucaoRapida = () => {{
+      if (!window.__LTDF_SPEED_ACTIVE__) {{
+        motorIniciado = false;
+        window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+        return;
+      }}
       const btnAtual = document.querySelector(SELETORES.botaoGirar);
-      if (btnAtual) dispararCliqueNativo(btnAtual);
+      if (btnAtual) {{
+        dispararCliqueNativo(btnAtual);
+        const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
+        if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
+          dispararCliqueNativo(btnTurbo);
+        }}
+      }}
       if (window.__LTDF_SPEED_ACTIVE__) {{
         window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
       }}
@@ -643,13 +670,13 @@ class LTDFReactiveInjector:
   }}
 
   window.__LTDF_CHECK_INTERVAL__ = setIntervalOriginal(() => {{
-    const botaoValidacao = document.querySelector(SELETORES.botaoGirar);
-    if (botaoValidacao && (botaoValidacao.offsetWidth > 0 || botaoValidacao.getBoundingClientRect().width > 0)) {{
-      clearIntervalOriginal(window.__LTDF_CHECK_INTERVAL__);
-      window.__LTDF_CHECK_INTERVAL__ = null;
-      ativarMotorSpeed();
+    if (window.__LTDF_SPEED_ACTIVE__) {{
+      const botaoValidacao = document.querySelector(SELETORES.botaoGirar);
+      if (botaoValidacao && (botaoValidacao.offsetWidth > 0 || botaoValidacao.getBoundingClientRect().width > 0)) {{
+        ativarMotorSpeed();
+      }}
     }}
-  }}, POLL_MS);
+  }}, Math.max(250, POLL_MS));
 
   window.addEventListener("beforeunload", () => {{
     window.__LTDF_SPEED_ACTIVE__ = false;
@@ -657,7 +684,7 @@ class LTDFReactiveInjector:
 
   return {{
     ok:true,
-    status:"TIME_AND_GRAPHIC_HOOK_OK",
+    status:"TIME_AND_GRAPHIC_HOOK_INITIALIZED",
     href:location.href,
     multiplier:MULTIPLICADOR_SPEED,
     pollMs:POLL_MS
