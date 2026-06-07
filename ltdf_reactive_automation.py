@@ -8,6 +8,7 @@ and synchronized native click dispatch.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -225,9 +226,22 @@ class LTDFReactiveInjector:
             value = str(value or "").lower()
             return any(token in value for token in ("pgsoft-games", "pgsoft", "game", "loader"))
 
+        def wait_current_context_ready() -> dict[str, Any]:
+            last_state = ""
+            for attempt in range(5):
+                try:
+                    last_state = str(driver.execute_script("return document.readyState;") or "")
+                    if last_state in {"interactive", "complete"}:
+                        return {"ready": True, "readyState": last_state, "attempts": attempt + 1}
+                except Exception as exc:
+                    return {"ready": False, "readyState": last_state, "attempts": attempt + 1, "error": str(exc)}
+                time.sleep(0.5)
+            return {"ready": False, "readyState": last_state, "attempts": 5}
+
         def inject_current(path: list[int], reason: dict[str, Any]) -> None:
             pre_state: dict[str, Any] = {}
             try:
+                ready_info = wait_current_context_ready()
                 pre_state = driver.execute_script(
                     """
                     const reloadKey = "ltdf_time_hook_iframe_reload_done";
@@ -247,6 +261,7 @@ class LTDFReactiveInjector:
                 payload["framePath"] = list(path)
                 payload["frameScore"] = 1200 if not path else 1100
                 payload["frameReason"] = reason
+                payload["readyInfo"] = ready_info
                 payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
                 payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
                 payload["href"] = pre_state.get("href")
