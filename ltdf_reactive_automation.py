@@ -60,7 +60,8 @@ class LTDFReactiveInjector:
 
         self.wait_for_dom(driver)
         self.logger.info("Injetando motor reativo LTDF.")
-        result = self._inject_in_game_context(driver, self._build_script())
+        script = self._build_script()
+        result = self._inject_in_game_context(driver, script)
         if isinstance(result, dict):
             self.logger.info("Motor reativo LTDF: %s", result.get("status", "sem_status"))
             return result
@@ -180,7 +181,57 @@ class LTDFReactiveInjector:
         except Exception:
             return []
 
+    def _inject_known_game_iframe(self, driver: webdriver.Chrome, script: str) -> dict[str, Any] | None:
+        """Fast path for PGSoft/game iframes; ignores protected third-party frames."""
+
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            return None
+
+        try:
+            current_url = str(getattr(driver, "current_url", "") or "").lower()
+            if "pgsoft-games" in current_url or "pgsoft" in current_url or "loader" in current_url:
+                result = driver.execute_script(script)
+                if isinstance(result, dict):
+                    result["framePath"] = []
+                    result["frameScore"] = 1200
+                    result["frameReason"] = {"directGameUrl": True}
+                return result
+        except Exception:
+            pass
+
+        try:
+            frame_count = len(driver.find_elements(By.TAG_NAME, "iframe"))
+        except Exception:
+            frame_count = 0
+
+        for index in range(frame_count):
+            try:
+                driver.switch_to.default_content()
+                frames = driver.find_elements(By.TAG_NAME, "iframe")
+                if index >= len(frames):
+                    continue
+                src = str(frames[index].get_attribute("src") or "").lower()
+                if not any(token in src for token in ("pgsoft", "game", "loader")):
+                    continue
+                driver.switch_to.frame(frames[index])
+                result = driver.execute_script(script)
+                if isinstance(result, dict):
+                    result["framePath"] = [index]
+                    result["frameScore"] = 1100
+                    result["frameReason"] = {"iframeSrc": src[:180]}
+                return result
+            except Exception as exc:
+                self.logger.debug("Iframe %s ignorado durante injecao LTDF: %s", index, exc)
+                continue
+        return None
+
     def _inject_in_game_context(self, driver: webdriver.Chrome, script: str) -> dict[str, Any]:
+        known_result = self._inject_known_game_iframe(driver, script)
+        if known_result is not None:
+            return known_result
+
         contexts = self._collect_frame_contexts(driver)
         best = max(contexts, key=lambda item: int(item.get("score") or -1), default={"path": [], "score": -1})
         path = list(best.get("path") or [])
