@@ -455,6 +455,7 @@ class LTDFReactiveInjector:
     }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_TIMEOUT__) window.setTimeout = window.__LTDF_NATIVE_SET_TIMEOUT__; }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_INTERVAL__) window.setInterval = window.__LTDF_NATIVE_SET_INTERVAL__; }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_RAF__) window.requestAnimationFrame = window.__LTDF_NATIVE_RAF__; }} catch (_) {{}}
     window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "cleanup", href: location.href, at: Date.now() }};
     return {{ ok:true, status:"DESTROYED", reason:reason || "cleanup" }};
   }}
@@ -472,17 +473,19 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "time_hook_sem_recursao_blindado_v3";
+  window.__LTDF_SPEED_VERSION__ = "time_and_graphic_hook_v4";
 
   const DateOriginal = window.__LTDF_NATIVE_DATE__ || window.Date;
   const setTimeoutOriginal = window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window);
   const setIntervalOriginal = window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window);
   const clearIntervalOriginal = window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window);
+  const rAForiginal = window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window);
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
+  window.__LTDF_NATIVE_RAF__ = rAForiginal;
 
   const dataInicioReal = DateOriginal.now();
   let ultimoVirtualDate = dataInicioReal;
@@ -532,6 +535,14 @@ class LTDFReactiveInjector:
     return setIntervalOriginal(callback, Math.max(1, Number(delay || 0) / MULTIPLICADOR_SPEED), ...args);
   }};
 
+  window.requestAnimationFrame = function(callback) {{
+    return rAForiginal(function(timestamp) {{
+      if (typeof callback === "function") {{
+        callback(timestamp * MULTIPLICADOR_SPEED);
+      }}
+    }});
+  }};
+
   let motorIniciado = false;
 
   function dispararCliqueNativo(el) {{
@@ -567,7 +578,7 @@ class LTDFReactiveInjector:
     if (motorIniciado) return false;
     motorIniciado = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor Grafico e Hook de Tempo Sincronizados com Sucesso!");
+    console.log("[LTDF] Motor Grafico, Hook de Tempo e Renderizadores Sincronizados!");
 
     const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
     if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
@@ -578,10 +589,10 @@ class LTDFReactiveInjector:
       const btnAtual = document.querySelector(SELETORES.botaoGirar);
       if (btnAtual) dispararCliqueNativo(btnAtual);
       if (window.__LTDF_SPEED_ACTIVE__) {{
-        window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
+        window.__LTDF_SPEED_RAF_ID__ = rAForiginal(loopExecucaoRapida);
       }}
     }};
-    window.__LTDF_SPEED_RAF_ID__ = requestAnimationFrame(loopExecucaoRapida);
+    window.__LTDF_SPEED_RAF_ID__ = rAForiginal(loopExecucaoRapida);
     return true;
   }}
 
@@ -600,7 +611,7 @@ class LTDFReactiveInjector:
 
   return {{
     ok:true,
-    status:"TIME_HOOK_ESTAVEL_OK",
+    status:"TIME_AND_GRAPHIC_HOOK_OK",
     href:location.href,
     multiplier:MULTIPLICADOR_SPEED,
     pollMs:POLL_MS
