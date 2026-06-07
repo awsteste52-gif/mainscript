@@ -221,6 +221,17 @@ class LTDFReactiveInjector:
             return None
 
         injections: list[dict[str, Any]] = []
+        try:
+            driver.execute_script(
+                """
+                if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
+                  window.__LTDF_RELOADED_FRAMES__ = [];
+                }
+                return true;
+                """
+            )
+        except Exception:
+            pass
 
         def is_game_url(value: str) -> bool:
             value = str(value or "").lower()
@@ -241,24 +252,42 @@ class LTDFReactiveInjector:
         def inject_current(path: list[int], reason: dict[str, Any]) -> None:
             pre_state: dict[str, Any] = {}
             try:
+                frame_key = ".".join(str(item) for item in path) if path else "root"
+                try:
+                    driver.switch_to.default_content()
+                    root_state = driver.execute_script(
+                        """
+                        const key = String(arguments[0] || "root");
+                        if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
+                          window.__LTDF_RELOADED_FRAMES__ = [];
+                        }
+                        const alreadyReloaded = window.__LTDF_RELOADED_FRAMES__.includes(key);
+                        return { frameKey:key, alreadyReloaded };
+                        """,
+                        frame_key,
+                    ) or {}
+                except Exception:
+                    root_state = {"frameKey": frame_key, "alreadyReloaded": False}
+                if not self._switch_to_frame_path(driver, path):
+                    return
                 ready_info = wait_current_context_ready()
                 pre_state = driver.execute_script(
                     """
-                    const reloadKey = "ltdf_time_hook_iframe_reload_done";
-                    let reloadDone = false;
-                    try { reloadDone = window.sessionStorage.getItem(reloadKey) === "1"; } catch (_) {}
-                    const firstRun = window.__LTDF_SPEED_ACTIVE__ === undefined && !reloadDone;
+                    const alreadyReloaded = !!arguments[0];
+                    const firstRun = window.__LTDF_SPEED_ACTIVE__ === undefined && !alreadyReloaded;
                     if (window.__LTDF_INITIALIZED__ === undefined) window.__LTDF_INITIALIZED__ = true;
                     return {
                       firstRun,
-                      reloadDone,
+                      reloadDone: alreadyReloaded,
                       href: String(location.href || "")
                     };
-                    """
+                    """,
+                    bool(root_state.get("alreadyReloaded")),
                 ) or {}
                 result = driver.execute_script(script)
                 payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
                 payload["framePath"] = list(path)
+                payload["frameKey"] = frame_key
                 payload["frameScore"] = 1200 if not path else 1100
                 payload["frameReason"] = reason
                 payload["readyInfo"] = ready_info
@@ -267,9 +296,24 @@ class LTDFReactiveInjector:
                 payload["href"] = pre_state.get("href")
                 if bool(pre_state.get("firstRun")):
                     try:
+                        driver.switch_to.default_content()
                         driver.execute_script(
                             """
-                            try { window.sessionStorage.setItem("ltdf_time_hook_iframe_reload_done", "1"); } catch (_) {}
+                            const key = String(arguments[0] || "root");
+                            if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
+                              window.__LTDF_RELOADED_FRAMES__ = [];
+                            }
+                            if (!window.__LTDF_RELOADED_FRAMES__.includes(key)) {
+                              window.__LTDF_RELOADED_FRAMES__.push(key);
+                            }
+                            return window.__LTDF_RELOADED_FRAMES__.slice();
+                            """,
+                            frame_key,
+                        )
+                        if not self._switch_to_frame_path(driver, path):
+                            return
+                        driver.execute_script(
+                            """
                             window.__LTDF_INITIALIZED__ = true;
                             window.location.reload();
                             return true;
