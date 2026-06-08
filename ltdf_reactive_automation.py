@@ -365,7 +365,7 @@ class LTDFReactiveInjector:
                 driver.switch_to.default_content()
             except Exception:
                 pass
-            time.sleep(5.0)
+            time.sleep(6.5)
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
                 try:
@@ -1014,10 +1014,10 @@ class LTDFReactiveInjector:
       buttons: 1
     }};
 
-    try {{ el.dispatchEvent(new MouseEvent("mousedown", parametrosEvent)); }} catch (_) {{}}
     try {{ el.dispatchEvent(new PointerEvent("pointerdown", {{ ...parametrosEvent, pointerId:1, pointerType:"mouse", isPrimary:true }})); }} catch (_) {{}}
-    try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new MouseEvent("mousedown", parametrosEvent)); }} catch (_) {{}}
     try {{ el.dispatchEvent(new PointerEvent("pointerup", {{ ...parametrosEvent, buttons:0, pointerId:1, pointerType:"mouse", isPrimary:true }})); }} catch (_) {{}}
+    try {{ el.dispatchEvent(new MouseEvent("mouseup", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
     try {{ el.dispatchEvent(new MouseEvent("click", {{ ...parametrosEvent, buttons:0 }})); }} catch (_) {{}}
     window.__LTDF_SPEED_LAST_CLICK__ = {{ at: virtualDateNow(), x: clientX, y: clientY }};
     return true;
@@ -1027,6 +1027,12 @@ class LTDFReactiveInjector:
     if (!el || !el.isConnected) return false;
     const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
     if (!rect || rect.width === 0 || rect.height === 0) return false;
+    const estilo = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (estilo && (
+      estilo.pointerEvents === "none" ||
+      estilo.opacity === "0" ||
+      Number(estilo.opacity || 1) <= 0
+    )) return false;
     const classes = el.classList;
     const desabilitado =
       el.hasAttribute("disabled") ||
