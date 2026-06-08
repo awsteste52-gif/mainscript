@@ -797,6 +797,13 @@ class LTDFReactiveInjector:
           writable: true
         }});
       }}
+      if (window.__LTDF_NATIVE_PERF_PROTO_NOW__ && window.Performance && window.Performance.prototype) {{
+        Object.defineProperty(window.Performance.prototype, "now", {{
+          value: window.__LTDF_NATIVE_PERF_PROTO_NOW__,
+          configurable: true,
+          writable: true
+        }});
+      }}
     }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_TIMEOUT__) window.setTimeout = window.__LTDF_NATIVE_SET_TIMEOUT__; }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_INTERVAL__) window.setInterval = window.__LTDF_NATIVE_SET_INTERVAL__; }} catch (_) {{}}
@@ -828,6 +835,13 @@ class LTDFReactiveInjector:
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
       if (native.rAF) window.requestAnimationFrame = native.rAF;
+      if (native.perfProtoNow && window.Performance && window.Performance.prototype) {{
+        Object.defineProperty(window.Performance.prototype, "now", {{
+          value: native.perfProtoNow,
+          configurable: true,
+          writable: true
+        }});
+      }}
       if (native.perfNow && window.performance) {{
         Object.defineProperty(window.performance, "now", {{
           value: native.perfNow,
@@ -848,6 +862,11 @@ class LTDFReactiveInjector:
       setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
       clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
       rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window),
+      perfProtoNow: window.__LTDF_NATIVE_PERF_PROTO_NOW__ || (
+        window.Performance && window.Performance.prototype && window.Performance.prototype.now
+          ? window.Performance.prototype.now
+          : null
+      ),
       perfNow: window.__LTDF_NATIVE_PERF_NOW__ || (
         window.performance && window.performance.now
           ? window.performance.now.bind(window.performance)
@@ -859,7 +878,7 @@ class LTDFReactiveInjector:
   if (
     window.__LTDF_SPEED_CONTAINER__ &&
     MULTIPLICADOR_SPEED > 1.0 &&
-    (!window.__LTDF_MODIFICADOS__ || !window.__LTDF_MODIFICADOS__.perfNow)
+    (!window.__LTDF_MODIFICADOS__ || !window.__LTDF_MODIFICADOS__.perfNow || !window.__LTDF_MODIFICADOS__.perfProtoNow)
   ) {{
     console.log("[LTDF] Atualizando motor para hook de Performance API.");
     cleanup("upgrade_perf_now_hook");
@@ -877,6 +896,13 @@ class LTDFReactiveInjector:
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
         window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
         window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
+        if (window.__LTDF_NATIVOS__.perfProtoNow && window.Performance && window.Performance.prototype) {{
+          Object.defineProperty(window.Performance.prototype, "now", {{
+            value: window.__LTDF_NATIVOS__.perfProtoNow,
+            configurable: true,
+            writable: true
+          }});
+        }}
         if (window.__LTDF_NATIVOS__.perfNow && window.performance) {{
           Object.defineProperty(window.performance, "now", {{
             value: window.__LTDF_NATIVOS__.perfNow,
@@ -896,6 +922,13 @@ class LTDFReactiveInjector:
       window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
       window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
       window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
+      if (window.__LTDF_MODIFICADOS__.perfProtoNow && window.Performance && window.Performance.prototype) {{
+        Object.defineProperty(window.Performance.prototype, "now", {{
+          value: window.__LTDF_MODIFICADOS__.perfProtoNow,
+          configurable: true,
+          writable: true
+        }});
+      }}
       if (window.__LTDF_MODIFICADOS__.perfNow && window.performance) {{
         Object.defineProperty(window.performance, "now", {{
           value: window.__LTDF_MODIFICADOS__.perfNow,
@@ -930,6 +963,7 @@ class LTDFReactiveInjector:
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
   const rAF_Nativo = window.__LTDF_NATIVOS__.rAF;
   const perfNowOriginal = window.__LTDF_NATIVOS__.perfNow;
+  const perfProtoNowOriginal = window.__LTDF_NATIVOS__.perfProtoNow;
 
   window.__LTDF_NATIVE_DATE__ = DateOriginal;
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
@@ -938,6 +972,7 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAF_Nativo;
   window.__LTDF_NATIVE_PERF_NOW__ = perfNowOriginal;
+  window.__LTDF_NATIVE_PERF_PROTO_NOW__ = perfProtoNowOriginal;
 
   let ultimoCheckReal = DateOriginal.now();
   let tempoInjetadoAcumulado = ultimoCheckReal;
@@ -964,6 +999,27 @@ class LTDFReactiveInjector:
     ultimoCheckPerfReal = agoraPerfReal;
     tempoPerfInjetadoAcumulado += deltaPerfReal * currentSpeed();
     return tempoPerfInjetadoAcumulado;
+  }}
+
+  function aplicarPerformanceNow(fn) {{
+    try {{
+      if (window.Performance && window.Performance.prototype) {{
+        Object.defineProperty(window.Performance.prototype, "now", {{
+          value: fn,
+          configurable: true,
+          writable: true
+        }});
+      }}
+    }} catch (_) {{}}
+    try {{
+      if (window.performance) {{
+        Object.defineProperty(window.performance, "now", {{
+          value: fn,
+          configurable: true,
+          writable: true
+        }});
+      }}
+    }} catch (_) {{}}
   }}
 
   class LTDFTimeHook extends DateOriginal {{
@@ -1031,14 +1087,8 @@ class LTDFReactiveInjector:
     }});
   }};
 
-  if (perfNowOriginal && window.performance) {{
-    try {{
-      Object.defineProperty(window.performance, "now", {{
-        value: virtualPerfNow,
-        configurable: true,
-        writable: true
-      }});
-    }} catch (_) {{}}
+  if (perfNowOriginal) {{
+    aplicarPerformanceNow(virtualPerfNow);
   }}
 
   window.__LTDF_MODIFICADOS__ = {{
@@ -1047,7 +1097,8 @@ class LTDFReactiveInjector:
     setInterval: customInterval,
     clearInterval: window.clearInterval,
     rAF: customRAF,
-    perfNow: virtualPerfNow
+    perfNow: virtualPerfNow,
+    perfProtoNow: virtualPerfNow
   }};
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
@@ -1056,14 +1107,8 @@ class LTDFReactiveInjector:
     window.setInterval = customInterval;
     window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
     window.requestAnimationFrame = customRAF;
-    if (perfNowOriginal && window.performance) {{
-      try {{
-        Object.defineProperty(window.performance, "now", {{
-          value: virtualPerfNow,
-          configurable: true,
-          writable: true
-        }});
-      }} catch (_) {{}}
+    if (perfNowOriginal) {{
+      aplicarPerformanceNow(virtualPerfNow);
     }}
   }}
 
