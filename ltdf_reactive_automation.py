@@ -35,7 +35,7 @@ class LTDFReactiveConfig:
     dom_timeout_seconds: int = 30
     loading_poll_ms: int = 1000
     observer_cooldown_ms: int = 40
-    iframe_scan_depth: int = 2
+    iframe_scan_depth: int = 4
     speed_multiplier: float = 4.0
     selectors: LTDFSelectors = field(default_factory=LTDFSelectors)
 
@@ -365,7 +365,7 @@ class LTDFReactiveInjector:
                 driver.switch_to.default_content()
             except Exception:
                 pass
-            time.sleep(6.5)
+            time.sleep(7.0)
             last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
             for attempt in range(1, 9):
                 try:
@@ -472,6 +472,7 @@ class LTDFReactiveInjector:
                     bool(pre_state.get("firstRun"))
                     and float(self.config.speed_multiplier or 1.0) > 1.0
                     and not bool(root_state.get("alreadyReloaded"))
+                    and bool(reason.get("allowReload", True))
                 )
                 if should_reload:
                     try:
@@ -567,6 +568,7 @@ class LTDFReactiveInjector:
                     bool(pre_state.get("firstRun"))
                     and float(self.config.speed_multiplier or 1.0) > 1.0
                     and bool(root_state.get("alreadyReloaded"))
+                    and bool(reason.get("allowReload", True))
                 ):
                     ready_info = wait_reloaded_game_ready(path, frame_hint)
                     if not ready_info.get("ready"):
@@ -653,12 +655,19 @@ class LTDFReactiveInjector:
                         pass
 
                 child_reloaded = False
-                if is_game_url(src) and self._switch_to_frame_path(driver, child_path):
-                    child_reloaded = inject_current(child_path, {"iframeSrc": src[:180], "multiTarget": True})
+                if self._switch_to_frame_path(driver, child_path):
+                    child_reloaded = inject_current(
+                        child_path,
+                        {
+                            "iframeSrc": src[:180],
+                            "multiTarget": True,
+                            "recursiveCascade": True,
+                            "allowReload": is_game_url(src),
+                        },
+                    )
 
                 if child_reloaded:
                     time.sleep(0.5)
-                    continue
                 scan_frame_tree(child_path, depth - 1)
 
         scan_frame_tree([], int(self.config.iframe_scan_depth))
