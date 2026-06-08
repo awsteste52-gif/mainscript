@@ -8,7 +8,6 @@ and synchronized native click dispatch.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -249,7 +248,6 @@ class LTDFReactiveInjector:
                         return {"ready": True, "readyState": last_state, "attempts": attempt + 1}
                 except Exception as exc:
                     return {"ready": False, "readyState": last_state, "attempts": attempt + 1, "error": str(exc)}
-                time.sleep(0.5)
             return {"ready": False, "readyState": last_state, "attempts": 5}
 
         def capture_frame_hint(path: list[int]) -> dict[str, Any]:
@@ -358,77 +356,8 @@ class LTDFReactiveInjector:
             except Exception as exc:
                 return {"ok": False, "mode": "hint_error", "path": path, "error": str(exc)}
 
-        def wait_reloaded_game_ready(path: list[int], frame_hint: dict[str, Any]) -> dict[str, Any]:
-            """Re-attach after reload and wait for DOM plus Canvas/WebGL readiness."""
-
-            try:
-                driver.switch_to.default_content()
-            except Exception:
-                pass
-            time.sleep(7.0)
-            last_info: dict[str, Any] = {"ready": False, "readyState": "", "attempts": 0}
-            for attempt in range(1, 9):
-                try:
-                    switch_info = switch_to_frame_path_or_hint(path, frame_hint)
-                    if not switch_info.get("ok"):
-                        last_info = {
-                            "ready": False,
-                            "attempts": attempt,
-                            "error": "frame_not_available",
-                            "switchInfo": switch_info,
-                        }
-                    else:
-                        last_info = driver.execute_script(
-                            """
-                            const canvases = Array.from(document.querySelectorAll("canvas"));
-                            const visibleCanvas = canvases.some((canvas) => {
-                              const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
-                              const cssReady = !!(rect && rect.width > 0 && rect.height > 0);
-                              const backingReady = Number(canvas.width || 0) > 0 && Number(canvas.height || 0) > 0;
-                              return cssReady && backingReady;
-                            });
-                            let webglReady = false;
-                            for (const canvas of canvases) {
-                              try {
-                                const context =
-                                  canvas.getContext("webgl2") ||
-                                  canvas.getContext("webgl") ||
-                                  canvas.getContext("experimental-webgl");
-                                if (context && typeof context.getParameter === "function") {
-                                  webglReady = true;
-                                  break;
-                                }
-                              } catch (_) {}
-                            }
-                            const readyState = String(document.readyState || "");
-                            const domReady = readyState === "interactive" || readyState === "complete";
-                            return {
-                              ready: domReady && (visibleCanvas || webglReady),
-                              readyState,
-                              domReady,
-                              visibleCanvas,
-                              webglReady,
-                              canvasCount: canvases.length
-                            };
-                            """
-                        ) or {}
-                        last_info["attempts"] = attempt
-                        last_info["switchInfo"] = switch_info
-                        if last_info.get("ready"):
-                            return last_info
-                except Exception as exc:
-                    last_info = {"ready": False, "attempts": attempt, "error": str(exc)}
-                finally:
-                    try:
-                        driver.switch_to.default_content()
-                    except Exception:
-                        pass
-                time.sleep(0.5)
-            return last_info
-
         def inject_current(path: list[int], reason: dict[str, Any]) -> bool:
             pre_state: dict[str, Any] = {}
-            reload_sent = False
             try:
                 frame_key = ".".join(str(item) for item in path) if path else "root"
                 try:
@@ -452,7 +381,8 @@ class LTDFReactiveInjector:
                 except Exception:
                     root_state = {"frameKey": frame_key, "alreadyReloaded": False}
                 frame_hint = capture_frame_hint(path)
-                if not self._switch_to_frame_path(driver, path):
+                switch_info = switch_to_frame_path_or_hint(path, frame_hint)
+                if not switch_info.get("ok"):
                     return False
                 ready_info = wait_current_context_ready()
                 pre_state = driver.execute_script(
@@ -468,129 +398,7 @@ class LTDFReactiveInjector:
                     """,
                     bool(root_state.get("alreadyReloaded")),
                 ) or {}
-                should_reload = (
-                    bool(pre_state.get("firstRun"))
-                    and float(self.config.speed_multiplier or 1.0) > 1.0
-                    and not bool(root_state.get("alreadyReloaded"))
-                    and bool(reason.get("allowReload", True))
-                )
-                if should_reload:
-                    try:
-                        driver.switch_to.default_content()
-                        driver.execute_script(
-                            """
-                            const key = String(arguments[0] || "root");
-                            if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
-                              window.__LTDF_RELOADED_FRAMES__ = [];
-                            }
-                            if (!Array.isArray(window.__LTDF_DONE_RELOADED__)) {
-                              window.__LTDF_DONE_RELOADED__ = [];
-                            }
-                            if (!window.__LTDF_RELOADED_FRAMES__.includes(key)) {
-                              window.__LTDF_RELOADED_FRAMES__.push(key);
-                            }
-                            if (!window.__LTDF_DONE_RELOADED__.includes(key)) {
-                              window.__LTDF_DONE_RELOADED__.push(key);
-                            }
-                            return {
-                              reloadedFrames: window.__LTDF_RELOADED_FRAMES__.slice(),
-                              doneReloaded: window.__LTDF_DONE_RELOADED__.slice()
-                            };
-                            """,
-                            frame_key,
-                        )
-                        if not self._switch_to_frame_path(driver, path):
-                            return True
-                        driver.execute_script(
-                            """
-                            window.__LTDF_INITIALIZED__ = true;
-                            window.location.reload();
-                            return true;
-                            """
-                        )
-                        reload_sent = True
-                        self.logger.info("LTDF lazy injection: reload estrutural enviado para frame %s.", frame_key)
-                        driver.switch_to.default_content()
-                        ready_info = wait_reloaded_game_ready(path, frame_hint)
-                        if not ready_info.get("ready"):
-                            self.logger.debug(
-                                "LTDF lazy injection: frame %s ainda sem Canvas/WebGL pronto: %s",
-                                frame_key,
-                                ready_info,
-                            )
-                            payload = {
-                                "ok": False,
-                                "status": "IFRAME_RELOAD_WAITING_CANVAS",
-                                "iframeReloadSent": True,
-                            }
-                            payload["framePath"] = list(path)
-                            payload["frameKey"] = frame_key
-                            payload["frameScore"] = 1200 if not path else 1100
-                            payload["frameReason"] = reason
-                            payload["readyInfo"] = ready_info
-                            payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
-                            payload["iframeReloadDone"] = True
-                            payload["href"] = pre_state.get("href")
-                            injections.append(payload)
-                            return True
-                        switch_info = switch_to_frame_path_or_hint(path, frame_hint)
-                        if not switch_info.get("ok"):
-                            return True
-                        post_state = driver.execute_script(
-                            """
-                            return {
-                              firstRun: window.__LTDF_SPEED_CONTAINER__ === undefined,
-                              reloadDone: true,
-                              href: String(location.href || "")
-                            };
-                            """
-                        ) or {}
-                        post_state["switchInfo"] = switch_info
-                        pre_state.update(post_state)
-                    except Exception as reload_exc:
-                        payload = {
-                            "ok": False,
-                            "status": "IFRAME_RELOAD_FAILED",
-                            "iframeReloadSent": False,
-                            "iframeReloadError": str(reload_exc),
-                        }
-                        payload["framePath"] = list(path)
-                        payload["frameKey"] = frame_key
-                        payload["frameScore"] = 1200 if not path else 1100
-                        payload["frameReason"] = reason
-                        payload["readyInfo"] = ready_info
-                        payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
-                        payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
-                        payload["href"] = pre_state.get("href")
-                        injections.append(payload)
-                        return reload_sent
-                elif (
-                    bool(pre_state.get("firstRun"))
-                    and float(self.config.speed_multiplier or 1.0) > 1.0
-                    and bool(root_state.get("alreadyReloaded"))
-                    and bool(reason.get("allowReload", True))
-                ):
-                    ready_info = wait_reloaded_game_ready(path, frame_hint)
-                    if not ready_info.get("ready"):
-                        payload = {
-                            "ok": False,
-                            "status": "IFRAME_RELOAD_WAITING_CANVAS",
-                            "iframeReloadSent": False,
-                        }
-                        payload["framePath"] = list(path)
-                        payload["frameKey"] = frame_key
-                        payload["frameScore"] = 1200 if not path else 1100
-                        payload["frameReason"] = reason
-                        payload["readyInfo"] = ready_info
-                        payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
-                        payload["iframeReloadDone"] = True
-                        payload["href"] = pre_state.get("href")
-                        injections.append(payload)
-                        return True
-                    switch_info = switch_to_frame_path_or_hint(path, frame_hint)
-                    if not switch_info.get("ok"):
-                        return True
-                    pre_state["switchInfo"] = switch_info
+                pre_state["switchInfo"] = switch_info
                 result = driver.execute_script(script)
                 payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
                 payload["framePath"] = list(path)
@@ -600,7 +408,8 @@ class LTDFReactiveInjector:
                 payload["readyInfo"] = ready_info
                 payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
                 payload["iframeReloadDone"] = bool(pre_state.get("reloadDone"))
-                payload["iframeReloadSent"] = reload_sent
+                payload["iframeReloadSent"] = False
+                payload["hotSwapOnly"] = True
                 payload["href"] = pre_state.get("href")
                 injections.append(payload)
             except Exception as exc:
@@ -610,7 +419,7 @@ class LTDFReactiveInjector:
                     driver.switch_to.default_content()
                 except Exception:
                     pass
-            return reload_sent
+            return False
 
         try:
             current_url = str(getattr(driver, "current_url", "") or "").lower()
@@ -662,12 +471,10 @@ class LTDFReactiveInjector:
                             "iframeSrc": src[:180],
                             "multiTarget": True,
                             "recursiveCascade": True,
-                            "allowReload": is_game_url(src),
+                            "hotSwapOnly": True,
                         },
                     )
 
-                if child_reloaded:
-                    time.sleep(0.5)
                 scan_frame_tree(child_path, depth - 1)
 
         scan_frame_tree([], int(self.config.iframe_scan_depth))
@@ -782,7 +589,7 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_CONTAINER__ = null;
     try {{
       const native = window.__LTDF_NATIVOS__ || {{}};
-      if (native.Date) window.Date = native.Date;
+      try {{ if (native.Date) window.Date = native.Date; }} catch (_) {{}}
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
@@ -829,8 +636,8 @@ class LTDFReactiveInjector:
       window.__LTDF_SPEED_RAF_ID__ = null;
       window.__LTDF_SPEED_ACTIVE__ = false;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-      if (native.Date) window.Date = native.Date;
-      if (native.DateNow && window.Date) window.Date.now = native.DateNow;
+      try {{ if (native.Date) window.Date = native.Date; }} catch (_) {{}}
+      try {{ if (native.DateNow && window.Date) window.Date.now = native.DateNow; }} catch (_) {{}}
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
@@ -890,8 +697,8 @@ class LTDFReactiveInjector:
       window.__LTDF_SPEED_ACTIVE__ = false;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
       try {{
-        window.Date = window.__LTDF_NATIVOS__.Date;
-        window.Date.now = window.__LTDF_NATIVOS__.DateNow;
+        try {{ window.Date = window.__LTDF_NATIVOS__.Date; }} catch (_) {{}}
+        try {{ window.Date.now = window.__LTDF_NATIVOS__.DateNow; }} catch (_) {{}}
         window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
         window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
@@ -917,7 +724,7 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_ACTIVE__ = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = !!window.__LTDF_SPEED_MOTOR_ACTIVE__;
     if (window.__LTDF_MODIFICADOS__) {{
-      window.Date = window.__LTDF_MODIFICADOS__.Date;
+      try {{ window.Date = window.__LTDF_MODIFICADOS__.Date; }} catch (_) {{}}
       window.setTimeout = window.__LTDF_MODIFICADOS__.setTimeout;
       window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
       window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
@@ -1113,7 +920,7 @@ class LTDFReactiveInjector:
   }};
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
-    window.Date = LTDFTimeHook;
+    try {{ window.Date = LTDFTimeHook; }} catch (_) {{}}
     window.setTimeout = customTimeout;
     window.setInterval = customInterval;
     window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
