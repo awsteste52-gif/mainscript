@@ -1082,7 +1082,18 @@ class LTDFReactiveInjector:
   const customRAF = function(callback) {{
     return rAF_Nativo(function(timestamp) {{
       if (typeof callback === "function") {{
-        callback(perfNowOriginal ? virtualPerfNow() : timestamp * currentSpeed());
+        if (typeof window.__LTDF_BASE_TIME__ !== "number") {{
+          window.__LTDF_BASE_TIME__ = timestamp;
+          window.__LTDF_LAST_RAF_TIME__ = timestamp;
+          window.__LTDF_VIRTUAL_RAF_TIME__ = timestamp;
+        }}
+        const ultimoTimestamp = typeof window.__LTDF_LAST_RAF_TIME__ === "number"
+          ? window.__LTDF_LAST_RAF_TIME__
+          : timestamp;
+        const deltaTimestamp = Math.max(0, timestamp - ultimoTimestamp);
+        window.__LTDF_LAST_RAF_TIME__ = timestamp;
+        window.__LTDF_VIRTUAL_RAF_TIME__ += deltaTimestamp * currentSpeed();
+        callback(window.__LTDF_VIRTUAL_RAF_TIME__);
       }}
     }});
   }};
@@ -1162,6 +1173,24 @@ class LTDFReactiveInjector:
     return !desabilitado;
   }}
 
+  function buscarElementoProfundo(seletor, root = document, visitados = new Set()) {{
+    if (!root || visitados.has(root)) return null;
+    visitados.add(root);
+    try {{
+      const direto = root.querySelector ? root.querySelector(seletor) : null;
+      if (direto && estaElementoAcionavel(direto)) return direto;
+      const candidatos = root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (const node of candidatos) {{
+        if (node.matches && node.matches(seletor) && estaElementoAcionavel(node)) return node;
+        if (node.shadowRoot) {{
+          const encontrado = buscarElementoProfundo(seletor, node.shadowRoot, visitados);
+          if (encontrado) return encontrado;
+        }}
+      }}
+    }} catch (_) {{}}
+    return null;
+  }}
+
   function ativarMotorSpeed() {{
     if (motorIniciado || motorAgendado) return false;
     motorAgendado = true;
@@ -1173,7 +1202,7 @@ class LTDFReactiveInjector:
         return;
       }}
 
-      const candidato = document.querySelector(SELETORES.botaoGirar);
+      const candidato = buscarElementoProfundo(SELETORES.botaoGirar);
       if (!estaElementoAcionavel(candidato)) {{
         inputEstavelDesde = 0;
         setTimeoutOriginal(tentarAtivarMotor, 500);
@@ -1201,10 +1230,10 @@ class LTDFReactiveInjector:
           window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
           return;
         }}
-        const btnAtual = document.querySelector(SELETORES.botaoGirar);
+        const btnAtual = buscarElementoProfundo(SELETORES.botaoGirar);
         if (estaElementoAcionavel(btnAtual)) {{
           dispararCliqueNativo(btnAtual);
-          const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
+          const btnTurbo = buscarElementoProfundo(SELETORES.botaoTurbo);
           const turboAtivo = btnTurbo && btnTurbo.classList && (
             btnTurbo.classList.contains("active") ||
             btnTurbo.classList.contains("is-active")
@@ -1214,10 +1243,10 @@ class LTDFReactiveInjector:
           }}
         }}
         if (window.__LTDF_SPEED_ACTIVE__) {{
-          window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
+          window.__LTDF_SPEED_RAF_ID__ = customRAF(loopExecucaoRapida);
         }}
       }};
-      window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
+      window.__LTDF_SPEED_RAF_ID__ = customRAF(loopExecucaoRapida);
     }};
 
     setTimeoutOriginal(tentarAtivarMotor, 500);
@@ -1226,7 +1255,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_CHECK_INTERVAL__ = setIntervalOriginal(() => {{
     if (window.__LTDF_SPEED_ACTIVE__) {{
-      const botaoValidacao = document.querySelector(SELETORES.botaoGirar);
+      const botaoValidacao = buscarElementoProfundo(SELETORES.botaoGirar);
       if (botaoValidacao && (botaoValidacao.offsetWidth > 0 || botaoValidacao.getBoundingClientRect().width > 0)) {{
         ativarMotorSpeed();
       }}
