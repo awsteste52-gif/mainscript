@@ -943,6 +943,7 @@ class LTDFReactiveInjector:
   }}
 
   let motorIniciado = false;
+  let motorAgendado = false;
 
   function dispararCliqueNativo(el) {{
     if (!el || !el.isConnected) return false;
@@ -973,31 +974,59 @@ class LTDFReactiveInjector:
     return true;
   }}
 
-  function ativarMotorSpeed() {{
-    if (motorIniciado) return false;
-    motorIniciado = true;
-    window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
-    console.log("[LTDF] Motor de aceleracao de hardware sincronizado!");
+  function estaElementoAcionavel(el) {{
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    if (!rect || rect.width === 0 || rect.height === 0) return false;
+    const classes = el.classList;
+    const desabilitado =
+      el.hasAttribute("disabled") ||
+      el.getAttribute("aria-disabled") === "true" ||
+      el.getAttribute("data-disabled") === "true" ||
+      (classes && (
+        classes.contains("disabled") ||
+        classes.contains("is-disabled") ||
+        classes.contains("ant-btn-disabled")
+      ));
+    return !desabilitado;
+  }}
 
-    const loopExecucaoRapida = () => {{
-      if (!window.__LTDF_SPEED_ACTIVE__) {{
-        motorIniciado = false;
-        window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-        return;
-      }}
-      const btnAtual = document.querySelector(SELETORES.botaoGirar);
-      if (btnAtual) {{
-        dispararCliqueNativo(btnAtual);
-        const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
-        if (btnTurbo && !(btnTurbo.classList && btnTurbo.classList.contains("active"))) {{
-          dispararCliqueNativo(btnTurbo);
+  function ativarMotorSpeed() {{
+    if (motorIniciado || motorAgendado) return false;
+    motorAgendado = true;
+
+    setTimeoutOriginal(() => {{
+      motorAgendado = false;
+      if (!window.__LTDF_SPEED_ACTIVE__) return;
+      motorIniciado = true;
+      window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
+      console.log("[LTDF] Motor de aceleracao de hardware sincronizado!");
+
+      const loopExecucaoRapida = () => {{
+        if (!window.__LTDF_SPEED_ACTIVE__) {{
+          motorIniciado = false;
+          motorAgendado = false;
+          window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+          return;
         }}
-      }}
-      if (window.__LTDF_SPEED_ACTIVE__) {{
-        window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
-      }}
-    }};
-    window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
+        const btnAtual = document.querySelector(SELETORES.botaoGirar);
+        if (estaElementoAcionavel(btnAtual)) {{
+          dispararCliqueNativo(btnAtual);
+          const btnTurbo = document.querySelector(SELETORES.botaoTurbo);
+          const turboAtivo = btnTurbo && btnTurbo.classList && (
+            btnTurbo.classList.contains("active") ||
+            btnTurbo.classList.contains("is-active")
+          );
+          if (estaElementoAcionavel(btnTurbo) && !turboAtivo) {{
+            dispararCliqueNativo(btnTurbo);
+          }}
+        }}
+        if (window.__LTDF_SPEED_ACTIVE__) {{
+          window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
+        }}
+      }};
+      window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
+    }}, 1500);
     return true;
   }}
 
