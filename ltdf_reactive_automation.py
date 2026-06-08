@@ -227,6 +227,9 @@ class LTDFReactiveInjector:
                 if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
                   window.__LTDF_RELOADED_FRAMES__ = [];
                 }
+                if (!Array.isArray(window.__LTDF_DONE_RELOADED__)) {
+                  window.__LTDF_DONE_RELOADED__ = [];
+                }
                 return true;
                 """
             )
@@ -436,7 +439,12 @@ class LTDFReactiveInjector:
                         if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
                           window.__LTDF_RELOADED_FRAMES__ = [];
                         }
-                        const alreadyReloaded = window.__LTDF_RELOADED_FRAMES__.includes(key);
+                        if (!Array.isArray(window.__LTDF_DONE_RELOADED__)) {
+                          window.__LTDF_DONE_RELOADED__ = [];
+                        }
+                        const alreadyReloaded =
+                          window.__LTDF_RELOADED_FRAMES__.includes(key) ||
+                          window.__LTDF_DONE_RELOADED__.includes(key);
                         return { frameKey:key, alreadyReloaded };
                         """,
                         frame_key,
@@ -460,7 +468,12 @@ class LTDFReactiveInjector:
                     """,
                     bool(root_state.get("alreadyReloaded")),
                 ) or {}
-                if bool(pre_state.get("firstRun")) and float(self.config.speed_multiplier or 1.0) > 1.0:
+                should_reload = (
+                    bool(pre_state.get("firstRun"))
+                    and float(self.config.speed_multiplier or 1.0) > 1.0
+                    and not bool(root_state.get("alreadyReloaded"))
+                )
+                if should_reload:
                     try:
                         driver.switch_to.default_content()
                         driver.execute_script(
@@ -469,10 +482,19 @@ class LTDFReactiveInjector:
                             if (!Array.isArray(window.__LTDF_RELOADED_FRAMES__)) {
                               window.__LTDF_RELOADED_FRAMES__ = [];
                             }
+                            if (!Array.isArray(window.__LTDF_DONE_RELOADED__)) {
+                              window.__LTDF_DONE_RELOADED__ = [];
+                            }
                             if (!window.__LTDF_RELOADED_FRAMES__.includes(key)) {
                               window.__LTDF_RELOADED_FRAMES__.push(key);
                             }
-                            return window.__LTDF_RELOADED_FRAMES__.slice();
+                            if (!window.__LTDF_DONE_RELOADED__.includes(key)) {
+                              window.__LTDF_DONE_RELOADED__.push(key);
+                            }
+                            return {
+                              reloadedFrames: window.__LTDF_RELOADED_FRAMES__.slice(),
+                              doneReloaded: window.__LTDF_DONE_RELOADED__.slice()
+                            };
                             """,
                             frame_key,
                         )
@@ -541,6 +563,32 @@ class LTDFReactiveInjector:
                         payload["href"] = pre_state.get("href")
                         injections.append(payload)
                         return reload_sent
+                elif (
+                    bool(pre_state.get("firstRun"))
+                    and float(self.config.speed_multiplier or 1.0) > 1.0
+                    and bool(root_state.get("alreadyReloaded"))
+                ):
+                    ready_info = wait_reloaded_game_ready(path, frame_hint)
+                    if not ready_info.get("ready"):
+                        payload = {
+                            "ok": False,
+                            "status": "IFRAME_RELOAD_WAITING_CANVAS",
+                            "iframeReloadSent": False,
+                        }
+                        payload["framePath"] = list(path)
+                        payload["frameKey"] = frame_key
+                        payload["frameScore"] = 1200 if not path else 1100
+                        payload["frameReason"] = reason
+                        payload["readyInfo"] = ready_info
+                        payload["iframeFirstRun"] = bool(pre_state.get("firstRun"))
+                        payload["iframeReloadDone"] = True
+                        payload["href"] = pre_state.get("href")
+                        injections.append(payload)
+                        return True
+                    switch_info = switch_to_frame_path_or_hint(path, frame_hint)
+                    if not switch_info.get("ok"):
+                        return True
+                    pre_state["switchInfo"] = switch_info
                 result = driver.execute_script(script)
                 payload = result if isinstance(result, dict) else {"ok": bool(result), "status": str(result)}
                 payload["framePath"] = list(path)
@@ -944,6 +992,7 @@ class LTDFReactiveInjector:
 
   let motorIniciado = false;
   let motorAgendado = false;
+  let inputEstavelDesde = 0;
 
   function dispararCliqueNativo(el) {{
     if (!el || !el.isConnected) return false;
@@ -995,9 +1044,30 @@ class LTDFReactiveInjector:
     if (motorIniciado || motorAgendado) return false;
     motorAgendado = true;
 
-    setTimeoutOriginal(() => {{
+    const tentarAtivarMotor = () => {{
+      if (!window.__LTDF_SPEED_ACTIVE__) {{
+        motorAgendado = false;
+        inputEstavelDesde = 0;
+        return;
+      }}
+
+      const candidato = document.querySelector(SELETORES.botaoGirar);
+      if (!estaElementoAcionavel(candidato)) {{
+        inputEstavelDesde = 0;
+        setTimeoutOriginal(tentarAtivarMotor, 500);
+        return;
+      }}
+
+      const agora = DateOriginal.now();
+      if (!inputEstavelDesde) {{
+        inputEstavelDesde = agora;
+      }}
+      if (agora - inputEstavelDesde < 2000) {{
+        setTimeoutOriginal(tentarAtivarMotor, 500);
+        return;
+      }}
+
       motorAgendado = false;
-      if (!window.__LTDF_SPEED_ACTIVE__) return;
       motorIniciado = true;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = true;
       console.log("[LTDF] Motor de aceleracao de hardware sincronizado!");
@@ -1026,7 +1096,9 @@ class LTDFReactiveInjector:
         }}
       }};
       window.__LTDF_SPEED_RAF_ID__ = rAF_Nativo(loopExecucaoRapida);
-    }}, 1500);
+    }};
+
+    setTimeoutOriginal(tentarAtivarMotor, 500);
     return true;
   }}
 
