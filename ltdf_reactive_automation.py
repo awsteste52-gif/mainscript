@@ -581,6 +581,7 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_RAF_ID__ = null;
     window.__LTDF_SPEED_ACTIVE__ = false;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+    try {{ liberarTravaLoop(); }} catch (_) {{}}
     window.__LTDF_SPEED_CONTAINER__ = null;
     try {{
       const native = window.__LTDF_NATIVOS__ || {{}};
@@ -613,6 +614,7 @@ class LTDFReactiveInjector:
       window.__LTDF_SPEED_RAF_ID__ = null;
       window.__LTDF_SPEED_ACTIVE__ = false;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+      try {{ liberarTravaLoop(); }} catch (_) {{}}
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
@@ -641,7 +643,7 @@ class LTDFReactiveInjector:
       window.__LTDF_MODIFICADOS__.setTimeout ||
       window.__LTDF_MODIFICADOS__.setInterval ||
       window.__LTDF_MODIFICADOS__.clearInterval ||
-      window.__LTDF_SPEED_VERSION__ !== "visual_timeline_native_timers_v7"
+      window.__LTDF_SPEED_VERSION__ !== "single_click_loop_native_timers_v8"
     )
   ) {{
     console.log("[LTDF] Atualizando motor para linha de tempo visual isolada com timers nativos.");
@@ -653,6 +655,7 @@ class LTDFReactiveInjector:
     if (MULTIPLICADOR_SPEED <= 1.0) {{
       window.__LTDF_SPEED_ACTIVE__ = false;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+      try {{ liberarTravaLoop(); }} catch (_) {{}}
       try {{
         window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
@@ -686,7 +689,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "visual_timeline_native_timers_v7";
+  window.__LTDF_SPEED_VERSION__ = "single_click_loop_native_timers_v8";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
@@ -771,6 +774,38 @@ class LTDFReactiveInjector:
   let motorAgendado = false;
   let inputEstavelDesde = 0;
 
+  window.__LTDF_LOOP_TOKEN__ = window.__LTDF_LOOP_TOKEN__ || (
+    String(Date.now()) + "_" + String(Math.random()).slice(2)
+  );
+
+  function obterJanelaTravaLoop() {{
+    try {{
+      if (window.top && window.top.document) return window.top;
+    }} catch (_) {{}}
+    return window;
+  }}
+
+  function adquirirTravaLoop() {{
+    const dono = obterJanelaTravaLoop();
+    const tokenAtual = dono.__LTDF_LOOP_TOKEN__;
+    if (dono.__LTDF_LOOP_ATIVO__ && tokenAtual && tokenAtual !== window.__LTDF_LOOP_TOKEN__) {{
+      return false;
+    }}
+    dono.__LTDF_LOOP_ATIVO__ = true;
+    dono.__LTDF_LOOP_TOKEN__ = window.__LTDF_LOOP_TOKEN__;
+    window.__LTDF_LOOP_ATIVO__ = true;
+    return true;
+  }}
+
+  function liberarTravaLoop() {{
+    const dono = obterJanelaTravaLoop();
+    if (!dono.__LTDF_LOOP_TOKEN__ || dono.__LTDF_LOOP_TOKEN__ === window.__LTDF_LOOP_TOKEN__) {{
+      dono.__LTDF_LOOP_ATIVO__ = false;
+      dono.__LTDF_LOOP_TOKEN__ = null;
+    }}
+    window.__LTDF_LOOP_ATIVO__ = false;
+  }}
+
   function dispararCliqueNativo(el) {{
     if (!el || !el.isConnected) return false;
     const rect = el.getBoundingClientRect();
@@ -840,11 +875,18 @@ class LTDFReactiveInjector:
   }}
 
   function ativarMotorSpeed() {{
-    if (motorIniciado || motorAgendado) return false;
+    if (motorIniciado || motorAgendado || !adquirirTravaLoop()) return false;
     motorAgendado = true;
 
     const tentarAtivarMotor = () => {{
-      if (!window.__LTDF_SPEED_ACTIVE__) {{
+      if (!window.__LTDF_SPEED_CONTAINER__ || !window.__LTDF_SPEED_ACTIVE__) {{
+        motorAgendado = false;
+        inputEstavelDesde = 0;
+        liberarTravaLoop();
+        return;
+      }}
+
+      if (!adquirirTravaLoop()) {{
         motorAgendado = false;
         inputEstavelDesde = 0;
         return;
@@ -872,14 +914,24 @@ class LTDFReactiveInjector:
       console.log("[LTDF] Motor de aceleracao de hardware sincronizado!");
 
       const loopExecucaoRapida = () => {{
-        if (!window.__LTDF_SPEED_ACTIVE__) {{
+        if (!window.__LTDF_SPEED_CONTAINER__ || !window.__LTDF_SPEED_ACTIVE__) {{
+          motorIniciado = false;
+          motorAgendado = false;
+          window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
+          liberarTravaLoop();
+          return;
+        }}
+
+        if (!adquirirTravaLoop()) {{
           motorIniciado = false;
           motorAgendado = false;
           window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
           return;
         }}
+
         const btnAtual = buscarElementoProfundo(SELETORES.botaoGirar);
-        if (estaElementoAcionavel(btnAtual)) {{
+        if (estaElementoAcionavel(btnAtual) && btnAtual.dataset && !btnAtual.dataset.ltdfClicado) {{
+          btnAtual.dataset.ltdfClicado = "true";
           dispararCliqueNativo(btnAtual);
           const btnTurbo = buscarElementoProfundo(SELETORES.botaoTurbo);
           const turboAtivo = btnTurbo && btnTurbo.classList && (
@@ -889,12 +941,16 @@ class LTDFReactiveInjector:
           if (estaElementoAcionavel(btnTurbo) && !turboAtivo) {{
             dispararCliqueNativo(btnTurbo);
           }}
+          setTimeoutOriginal(() => {{
+            try {{ if (btnAtual && btnAtual.dataset) delete btnAtual.dataset.ltdfClicado; }} catch (_) {{}}
+          }}, 100);
         }}
         if (window.__LTDF_SPEED_ACTIVE__) {{
-          window.__LTDF_SPEED_RAF_ID__ = setTimeoutOriginal(loopExecucaoRapida, 150);
+          const proximoDelay = 200 + Math.floor(Math.random() * 50);
+          window.__LTDF_SPEED_RAF_ID__ = setTimeoutOriginal(loopExecucaoRapida, proximoDelay);
         }}
       }};
-      window.__LTDF_SPEED_RAF_ID__ = setTimeoutOriginal(loopExecucaoRapida, 150);
+      window.__LTDF_SPEED_RAF_ID__ = setTimeoutOriginal(loopExecucaoRapida, 200);
     }};
 
     setTimeoutOriginal(tentarAtivarMotor, 500);
