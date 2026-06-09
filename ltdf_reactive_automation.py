@@ -421,12 +421,7 @@ class LTDFReactiveInjector:
                     pass
             return False
 
-        try:
-            current_url = str(getattr(driver, "current_url", "") or "").lower()
-            if is_game_url(current_url):
-                inject_current([], {"directGameUrl": True, "url": current_url[:180]})
-        except Exception:
-            pass
+        inject_current([], {"directRoot": True, "recursiveCascade": True, "hotSwapOnly": True})
 
         def scan_frame_tree(path: list[int], depth: int) -> None:
             if depth < 0:
@@ -592,9 +587,11 @@ class LTDFReactiveInjector:
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
+      if (native.rAF) window.requestAnimationFrame = native.rAF;
     }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_TIMEOUT__) window.setTimeout = window.__LTDF_NATIVE_SET_TIMEOUT__; }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_INTERVAL__) window.setInterval = window.__LTDF_NATIVE_SET_INTERVAL__; }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_RAF__) window.requestAnimationFrame = window.__LTDF_NATIVE_RAF__; }} catch (_) {{}}
     window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "cleanup", href: location.href, at: Date.now() }};
     return {{ ok:true, status:"DESTROYED", reason:reason || "cleanup" }};
   }}
@@ -619,6 +616,7 @@ class LTDFReactiveInjector:
       if (native.setTimeout) window.setTimeout = native.setTimeout;
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
+      if (native.rAF) window.requestAnimationFrame = native.rAF;
     }} catch (_) {{}}
   }}
 
@@ -629,17 +627,28 @@ class LTDFReactiveInjector:
       setTimeout: window.__LTDF_NATIVE_SET_TIMEOUT__ || window.setTimeout.bind(window),
       clearTimeout: window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout.bind(window),
       setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
-      clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window)
+      clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
+      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window),
+      perfNow: window.__LTDF_NATIVE_PERF_NOW__ || (
+        window.performance && window.performance.now
+          ? window.performance.now.bind(window.performance)
+          : null
+      )
     }};
   }}
 
   if (
     window.__LTDF_SPEED_CONTAINER__ &&
     MULTIPLICADOR_SPEED > 1.0 &&
-    (!window.__LTDF_MODIFICADOS__ || !window.__LTDF_MODIFICADOS__.setTimeout || !window.__LTDF_MODIFICADOS__.setInterval)
+    (
+      !window.__LTDF_MODIFICADOS__ ||
+      !window.__LTDF_MODIFICADOS__.setTimeout ||
+      !window.__LTDF_MODIFICADOS__.setInterval ||
+      !window.__LTDF_MODIFICADOS__.rAF
+    )
   ) {{
-    console.log("[LTDF] Atualizando motor para divisao parametrica de timers.");
-    cleanup("upgrade_timer_core_patch");
+    console.log("[LTDF] Atualizando motor para relogio unificado.");
+    cleanup("upgrade_unified_clock_patch");
   }}
 
   if (window.__LTDF_SPEED_CONTAINER__) {{
@@ -651,6 +660,9 @@ class LTDFReactiveInjector:
         window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
         window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
+        window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
+        window.__LTDF_CLOCK_REAL__ = null;
+        window.__LTDF_CLOCK_VIRTUAL__ = null;
       }} catch (_) {{}}
       console.log("[LTDF] Sistema restaurado para a velocidade normal de fabrica.");
       return {{ ok:true, status:"SPEED_RESTORED_TO_NORMAL", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
@@ -661,6 +673,7 @@ class LTDFReactiveInjector:
       window.setTimeout = window.__LTDF_MODIFICADOS__.setTimeout;
       window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
       window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
+      window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
     }}
     console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
     return {{ ok:true, status:"SPEED_UPDATED_DYNAMICALLY", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
@@ -685,12 +698,16 @@ class LTDFReactiveInjector:
   const clearTimeoutOriginal = window.__LTDF_NATIVOS__.clearTimeout || window.clearTimeout.bind(window);
   const setIntervalOriginal = window.__LTDF_NATIVOS__.setInterval;
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
+  const rAFOriginal = window.__LTDF_NATIVOS__.rAF || window.requestAnimationFrame.bind(window);
+  const perfNowOriginal = window.__LTDF_NATIVOS__.perfNow;
 
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_DATE_NOW__ = window.__LTDF_NATIVOS__.DateNow;
   window.__LTDF_NATIVE_CLEAR_TIMEOUT__ = clearTimeoutOriginal;
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
+  window.__LTDF_NATIVE_RAF__ = rAFOriginal;
+  window.__LTDF_NATIVE_PERF_NOW__ = perfNowOriginal;
 
   function currentSpeed() {{
     const raw = window.__LTDF_SPEED_CONTAINER__ ? Number(window.__LTDF_SPEED_CONTAINER__.multiplicador) : 1.0;
@@ -725,16 +742,38 @@ class LTDFReactiveInjector:
     return clearIntervalOriginal(ref);
   }};
 
+  function relogioModulado(timestampReal) {{
+    const leituraReal = perfNowOriginal ? perfNowOriginal() : timestampReal;
+    if (typeof window.__LTDF_CLOCK_REAL__ !== "number") {{
+      window.__LTDF_CLOCK_REAL__ = leituraReal;
+      window.__LTDF_CLOCK_VIRTUAL__ = leituraReal;
+    }}
+    const deltaReal = Math.max(0, leituraReal - window.__LTDF_CLOCK_REAL__);
+    window.__LTDF_CLOCK_REAL__ = leituraReal;
+    window.__LTDF_CLOCK_VIRTUAL__ += deltaReal * currentSpeed();
+    return window.__LTDF_CLOCK_VIRTUAL__;
+  }}
+
+  const customRAF = function(callback) {{
+    return rAFOriginal(function(timestampReal) {{
+      if (typeof callback === "function") {{
+        callback(window.__LTDF_SPEED_ACTIVE__ ? relogioModulado(timestampReal) : timestampReal);
+      }}
+    }});
+  }};
+
   window.__LTDF_MODIFICADOS__ = {{
     setTimeout: customTimeout,
     setInterval: customInterval,
-    clearInterval: window.clearInterval
+    clearInterval: window.clearInterval,
+    rAF: customRAF
   }};
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
     window.setTimeout = customTimeout;
     window.setInterval = customInterval;
     window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
+    window.requestAnimationFrame = customRAF;
   }}
 
   let motorIniciado = false;
