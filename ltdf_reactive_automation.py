@@ -642,8 +642,8 @@ class LTDFReactiveInjector:
       !window.__LTDF_MODIFICADOS__.rAF
     )
   ) {{
-    console.log("[LTDF] Atualizando motor para relogio unificado.");
-    cleanup("upgrade_unified_clock_patch");
+    console.log("[LTDF] Atualizando motor para ciclo serial de frames.");
+    cleanup("upgrade_serial_frame_patch");
   }}
 
   if (window.__LTDF_SPEED_CONTAINER__) {{
@@ -656,8 +656,6 @@ class LTDFReactiveInjector:
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
         window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
         window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
-        window.__LTDF_CLOCK_REAL__ = null;
-        window.__LTDF_CLOCK_VIRTUAL__ = null;
       }} catch (_) {{}}
       console.log("[LTDF] Sistema restaurado para a velocidade normal de fabrica.");
       return {{ ok:true, status:"SPEED_RESTORED_TO_NORMAL", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
@@ -735,25 +733,16 @@ class LTDFReactiveInjector:
     return clearIntervalOriginal(ref);
   }};
 
-  function relogioModulado(timestampReal) {{
-    if (typeof window.__LTDF_CLOCK_REAL__ !== "number") {{
-      window.__LTDF_CLOCK_REAL__ = timestampReal;
-      window.__LTDF_CLOCK_VIRTUAL__ = timestampReal;
-      return timestampReal;
-    }}
-    let deltaReal = Math.max(0, timestampReal - window.__LTDF_CLOCK_REAL__);
-    if (deltaReal > 100) {{
-      deltaReal = 16.66;
-    }}
-    window.__LTDF_CLOCK_REAL__ = timestampReal;
-    window.__LTDF_CLOCK_VIRTUAL__ += deltaReal * currentSpeed();
-    return window.__LTDF_CLOCK_VIRTUAL__;
-  }}
-
   const customRAF = function(callback) {{
     return rAFOriginal(function(timestampReal) {{
       if (typeof callback === "function") {{
-        callback(window.__LTDF_SPEED_ACTIVE__ ? relogioModulado(timestampReal) : timestampReal);
+        callback(timestampReal);
+        if (window.__LTDF_SPEED_ACTIVE__) {{
+          const ciclos = Math.max(1, Math.floor(currentSpeed()));
+          for (let i = 1; i < ciclos; i++) {{
+            callback(timestampReal + (i * 16.66));
+          }}
+        }}
       }}
     }});
   }};
