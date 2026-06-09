@@ -653,7 +653,7 @@ class LTDFReactiveInjector:
       window.__LTDF_MODIFICADOS__.setTimeout ||
       window.__LTDF_MODIFICADOS__.setInterval ||
       window.__LTDF_MODIFICADOS__.clearInterval ||
-      window.__LTDF_SPEED_VERSION__ !== "perf_now_native_scope_v10"
+      window.__LTDF_SPEED_VERSION__ !== "unified_delta_timeline_v11"
     )
   ) {{
     console.log("[LTDF] Atualizando motor para linha de tempo visual isolada com timers nativos.");
@@ -662,6 +662,7 @@ class LTDFReactiveInjector:
 
   if (window.__LTDF_SPEED_CONTAINER__) {{
     window.__LTDF_SPEED_CONTAINER__.multiplicador = MULTIPLICADOR_SPEED;
+    window.__LTDF_SPEED_CONTAINER__.speedActive = MULTIPLICADOR_SPEED > 1.0;
     if (MULTIPLICADOR_SPEED <= 1.0) {{
       window.__LTDF_SPEED_ACTIVE__ = false;
       window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
@@ -703,8 +704,8 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "perf_now_native_scope_v10";
-  window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
+  window.__LTDF_SPEED_VERSION__ = "unified_delta_timeline_v11";
+  window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED, speedActive: true }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
   const clearTimeoutOriginal = window.__LTDF_NATIVOS__.clearTimeout || window.clearTimeout.bind(window);
@@ -727,34 +728,66 @@ class LTDFReactiveInjector:
   window.setInterval = setIntervalOriginal;
   window.clearInterval = clearIntervalOriginal;
 
-  // 1. Inicialização estável e centralizada do relógio global persistente
+  // =====================================================================
+  // CONTROLE TEMPORAL UNIFICADO - ACELERAÇÃO POR DELTA (PENTE FINO)
+  // =====================================================================
+
   if (!window.__LTDF_SPEED_CONTAINER__.relogio) {{
     window.__LTDF_SPEED_CONTAINER__.relogio = {{
-      primeiroReal: null,
-      ultimoReal: null,
-      virtualAcumulado: null
+      ultimoRealPerf: null,
+      virtualAcumuladoPerf: null,
+      ultimoRealRAF: null,
+      virtualAcumuladoRAF: null
     }};
   }}
 
-  // 2. Acoplamento de Performance à Linha de Tempo Virtual (Força a aceleração visual)
+  // 1. Modulação de Performance.now por Delta Estrito
   const customPerfNow = function() {{
+    const tNativo = window.__LTDF_NATIVOS__.perfNow ? window.__LTDF_NATIVOS__.perfNow.call(window.performance) : 0;
     const container = window.__LTDF_SPEED_CONTAINER__;
     const status = container ? container.relogio : null;
-    if (!container || !window.__LTDF_SPEED_ACTIVE__ || !status || status.virtualAcumulado === null) {{
-      return window.__LTDF_NATIVOS__.perfNow ? window.__LTDF_NATIVOS__.perfNow.call(window.performance) : 0;
+
+    if (!container || !window.__LTDF_SPEED_ACTIVE__ || !status) {{
+      if (status) {{
+        status.ultimoRealPerf = tNativo;
+        status.virtualAcumuladoPerf = tNativo;
+      }}
+      return tNativo;
     }}
-    // Retorna o exato andamento do relógio virtual para manter a paridade física do motor
-    return status.virtualAcumulado;
+
+    if (status.ultimoRealPerf === null || status.virtualAcumuladoPerf === null) {{
+      status.ultimoRealPerf = tNativo;
+      status.virtualAcumuladoPerf = tNativo;
+      return tNativo;
+    }}
+
+    let delta = tNativo - status.ultimoRealPerf;
+
+    // Amortecedor para instabilidade de hardware
+    if (delta > 100 || delta < 0) {{
+      delta = 16.66;
+    }} else if (delta < 1) {{
+      // Anti-travamento WG: Se ler duas vezes no mesmo milissegundo, não multiplica
+      status.ultimoRealPerf = tNativo;
+      status.virtualAcumuladoPerf += delta;
+      return status.virtualAcumuladoPerf;
+    }}
+
+    status.ultimoRealPerf = tNativo;
+    const mult = window.__LTDF_SPEED_CONTAINER__.multiplicador;
+    status.virtualAcumuladoPerf += delta * mult;
+
+    return status.virtualAcumuladoPerf;
   }};
 
-  if (window.performance && window.performance.now) {{
+  if (window.performance && window.__LTDF_NATIVOS__.perfNow) {{
     try {{ window.performance.now = customPerfNow; }} catch (_) {{}}
     if (window.Performance && window.Performance.prototype) {{
       try {{ window.Performance.prototype.now = customPerfNow; }} catch (_) {{}}
     }}
   }}
 
-  // 3. Loop Gráfico de Atualização Contínua
+  // 2. Loop Gráfico de Atualização de Quadros (requestAnimationFrame)
   const customRAF = function(callback) {{
     return window.__LTDF_NATIVOS__.rAF.call(window, function(timestampReal) {{
       if (typeof callback !== "function") return;
@@ -765,28 +798,24 @@ class LTDFReactiveInjector:
 
       const status = window.__LTDF_SPEED_CONTAINER__.relogio;
 
-      if (status.primeiroReal === null) {{
-        status.primeiroReal = timestampReal;
-        status.ultimoReal = timestampReal;
-        status.virtualAcumulado = timestampReal;
+      if (status.ultimoRealRAF === null) {{
+        status.ultimoRealRAF = timestampReal;
+        status.virtualAcumuladoRAF = timestampReal;
         return callback(timestampReal);
       }}
 
-      let deltaReal = timestampReal - status.ultimoReal;
+      let deltaReal = timestampReal - status.ultimoRealRAF;
 
-      // Amortecedor estrito contra quedas de frame do AdsPower
       if (deltaReal > 100 || deltaReal < 0) {{
         deltaReal = 16.66;
       }}
 
-      status.ultimoReal = timestampReal;
+      status.ultimoRealRAF = timestampReal;
 
-      // Progresso escalar linear do tempo gráfico
       const mult = window.__LTDF_SPEED_CONTAINER__.multiplicador;
-      status.virtualAcumulado += deltaReal * mult;
+      status.virtualAcumuladoRAF += deltaReal * mult;
 
-      // Dispara o quadro alinhado com o relógio de performance acoplado acima
-      return callback(status.virtualAcumulado);
+      return callback(status.virtualAcumuladoRAF);
     }});
   }};
 
