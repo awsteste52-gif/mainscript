@@ -639,11 +639,12 @@ class LTDFReactiveInjector:
       !window.__LTDF_MODIFICADOS__ ||
       !window.__LTDF_MODIFICADOS__.setTimeout ||
       !window.__LTDF_MODIFICADOS__.setInterval ||
-      !window.__LTDF_MODIFICADOS__.rAF
+      !window.__LTDF_MODIFICADOS__.rAF ||
+      window.__LTDF_SPEED_VERSION__ !== "dynamic_speed_container_v6"
     )
   ) {{
-    console.log("[LTDF] Atualizando motor para ciclo serial de frames.");
-    cleanup("upgrade_serial_frame_patch");
+    console.log("[LTDF] Atualizando motor para linha de tempo linear isolada.");
+    cleanup("upgrade_linear_timeline_patch");
   }}
 
   if (window.__LTDF_SPEED_CONTAINER__) {{
@@ -684,7 +685,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "dynamic_speed_container_v5";
+  window.__LTDF_SPEED_VERSION__ = "dynamic_speed_container_v6";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
@@ -733,16 +734,29 @@ class LTDFReactiveInjector:
     return clearIntervalOriginal(ref);
   }};
 
+  let ultimoTimestampReal = null;
+  let tempoVirtualAcumulado = null;
+
   const customRAF = function(callback) {{
     return rAFOriginal(function(timestampReal) {{
       if (typeof callback === "function") {{
-        callback(timestampReal);
-        if (window.__LTDF_SPEED_ACTIVE__) {{
-          const ciclos = Math.max(1, Math.floor(currentSpeed()));
-          for (let i = 1; i < ciclos; i++) {{
-            callback(timestampReal + (i * 16.66));
-          }}
+        if (!window.__LTDF_SPEED_ACTIVE__) {{
+          return callback(timestampReal);
         }}
+
+        if (typeof ultimoTimestampReal !== "number" || typeof tempoVirtualAcumulado !== "number") {{
+          ultimoTimestampReal = timestampReal;
+          tempoVirtualAcumulado = timestampReal;
+          return callback(timestampReal);
+        }}
+
+        let deltaReal = timestampReal - ultimoTimestampReal;
+        if (!Number.isFinite(deltaReal) || deltaReal < 0 || deltaReal > 100) {{
+          deltaReal = 16.66;
+        }}
+        ultimoTimestampReal = timestampReal;
+        tempoVirtualAcumulado += deltaReal * currentSpeed();
+        return callback(tempoVirtualAcumulado);
       }}
     }});
   }};
