@@ -739,8 +739,12 @@ class LTDFReactiveInjector:
     if (typeof window.__LTDF_CLOCK_REAL__ !== "number") {{
       window.__LTDF_CLOCK_REAL__ = timestampReal;
       window.__LTDF_CLOCK_VIRTUAL__ = timestampReal;
+      return timestampReal;
     }}
-    const deltaReal = Math.max(0, timestampReal - window.__LTDF_CLOCK_REAL__);
+    let deltaReal = Math.max(0, timestampReal - window.__LTDF_CLOCK_REAL__);
+    if (deltaReal > 100) {{
+      deltaReal = 16.66;
+    }}
     window.__LTDF_CLOCK_REAL__ = timestampReal;
     window.__LTDF_CLOCK_VIRTUAL__ += deltaReal * currentSpeed();
     return window.__LTDF_CLOCK_VIRTUAL__;
