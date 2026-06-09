@@ -628,12 +628,7 @@ class LTDFReactiveInjector:
       clearTimeout: window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout.bind(window),
       setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
       clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
-      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window),
-      perfNow: window.__LTDF_NATIVE_PERF_NOW__ || (
-        window.performance && window.performance.now
-          ? window.performance.now.bind(window.performance)
-          : null
-      )
+      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window)
     }};
   }}
 
@@ -699,7 +694,6 @@ class LTDFReactiveInjector:
   const setIntervalOriginal = window.__LTDF_NATIVOS__.setInterval;
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
   const rAFOriginal = window.__LTDF_NATIVOS__.rAF || window.requestAnimationFrame.bind(window);
-  const perfNowOriginal = window.__LTDF_NATIVOS__.perfNow;
 
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_DATE_NOW__ = window.__LTDF_NATIVOS__.DateNow;
@@ -707,7 +701,6 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAFOriginal;
-  window.__LTDF_NATIVE_PERF_NOW__ = perfNowOriginal;
 
   function currentSpeed() {{
     const raw = window.__LTDF_SPEED_CONTAINER__ ? Number(window.__LTDF_SPEED_CONTAINER__.multiplicador) : 1.0;
@@ -743,13 +736,12 @@ class LTDFReactiveInjector:
   }};
 
   function relogioModulado(timestampReal) {{
-    const leituraReal = perfNowOriginal ? perfNowOriginal() : timestampReal;
     if (typeof window.__LTDF_CLOCK_REAL__ !== "number") {{
-      window.__LTDF_CLOCK_REAL__ = leituraReal;
-      window.__LTDF_CLOCK_VIRTUAL__ = leituraReal;
+      window.__LTDF_CLOCK_REAL__ = timestampReal;
+      window.__LTDF_CLOCK_VIRTUAL__ = timestampReal;
     }}
-    const deltaReal = Math.max(0, leituraReal - window.__LTDF_CLOCK_REAL__);
-    window.__LTDF_CLOCK_REAL__ = leituraReal;
+    const deltaReal = Math.max(0, timestampReal - window.__LTDF_CLOCK_REAL__);
+    window.__LTDF_CLOCK_REAL__ = timestampReal;
     window.__LTDF_CLOCK_VIRTUAL__ += deltaReal * currentSpeed();
     return window.__LTDF_CLOCK_VIRTUAL__;
   }}
