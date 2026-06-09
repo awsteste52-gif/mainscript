@@ -637,13 +637,14 @@ class LTDFReactiveInjector:
     MULTIPLICADOR_SPEED > 1.0 &&
     (
       !window.__LTDF_MODIFICADOS__ ||
-      !window.__LTDF_MODIFICADOS__.setTimeout ||
-      !window.__LTDF_MODIFICADOS__.setInterval ||
       !window.__LTDF_MODIFICADOS__.rAF ||
-      window.__LTDF_SPEED_VERSION__ !== "dynamic_speed_container_v6"
+      window.__LTDF_MODIFICADOS__.setTimeout ||
+      window.__LTDF_MODIFICADOS__.setInterval ||
+      window.__LTDF_MODIFICADOS__.clearInterval ||
+      window.__LTDF_SPEED_VERSION__ !== "visual_timeline_native_timers_v7"
     )
   ) {{
-    console.log("[LTDF] Atualizando motor para linha de tempo linear isolada.");
+    console.log("[LTDF] Atualizando motor para linha de tempo visual isolada com timers nativos.");
     cleanup("upgrade_linear_timeline_patch");
   }}
 
@@ -664,9 +665,9 @@ class LTDFReactiveInjector:
     window.__LTDF_SPEED_ACTIVE__ = true;
     window.__LTDF_SPEED_MOTOR_ACTIVE__ = !!window.__LTDF_SPEED_MOTOR_ACTIVE__;
     if (window.__LTDF_MODIFICADOS__) {{
-      window.setTimeout = window.__LTDF_MODIFICADOS__.setTimeout;
-      window.setInterval = window.__LTDF_MODIFICADOS__.setInterval;
-      window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
+      window.setTimeout = window.__LTDF_NATIVOS__.setTimeout;
+      window.setInterval = window.__LTDF_NATIVOS__.setInterval;
+      window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
       window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
     }}
     console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
@@ -685,7 +686,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "dynamic_speed_container_v6";
+  window.__LTDF_SPEED_VERSION__ = "visual_timeline_native_timers_v7";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
@@ -701,38 +702,9 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAFOriginal;
 
-  function currentSpeed() {{
-    const raw = window.__LTDF_SPEED_CONTAINER__ ? Number(window.__LTDF_SPEED_CONTAINER__.multiplicador) : 1.0;
-    return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
-  }}
-
-  const customTimeout = function(callback, delay, ...args) {{
-    return setTimeoutOriginal(callback, Math.max(0, Number(delay || 0) / currentSpeed()), ...args);
-  }};
-
-  const customInterval = function(callback, delay, ...args) {{
-    const intervalRef = {{ id:null, active:true }};
-    const baseDelay = Math.max(1, Number(delay || 0) || 0);
-    const cicloInterno = function() {{
-      if (!intervalRef.active) return;
-      if (typeof callback === "function") callback(...args);
-      if (intervalRef.active && window.__LTDF_SPEED_ACTIVE__) {{
-        const proximoDelay = Math.max(1, baseDelay / currentSpeed());
-        intervalRef.id = setTimeoutOriginal(cicloInterno, proximoDelay);
-      }}
-    }};
-    intervalRef.id = setTimeoutOriginal(cicloInterno, Math.max(1, baseDelay / currentSpeed()));
-    return intervalRef;
-  }};
-
-  window.clearInterval = function(ref) {{
-    if (ref && typeof ref === "object" && "id" in ref) {{
-      ref.active = false;
-      if (ref.id) clearTimeoutOriginal(ref.id);
-      return;
-    }}
-    return clearIntervalOriginal(ref);
-  }};
+  window.setTimeout = setTimeoutOriginal;
+  window.setInterval = setIntervalOriginal;
+  window.clearInterval = clearIntervalOriginal;
 
   // =====================================================================
   // REVISÃO SUPREMA DE PENTE FINO - PERSISTÊNCIA GLOBAL (COMMIT aa9e9d2)
@@ -785,16 +757,13 @@ class LTDFReactiveInjector:
   }};
 
   window.__LTDF_MODIFICADOS__ = {{
-    setTimeout: customTimeout,
-    setInterval: customInterval,
-    clearInterval: window.clearInterval,
     rAF: customRAF
   }};
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
-    window.setTimeout = customTimeout;
-    window.setInterval = customInterval;
-    window.clearInterval = window.__LTDF_MODIFICADOS__.clearInterval;
+    window.setTimeout = setTimeoutOriginal;
+    window.setInterval = setIntervalOriginal;
+    window.clearInterval = clearIntervalOriginal;
     window.requestAnimationFrame = customRAF;
   }}
 
