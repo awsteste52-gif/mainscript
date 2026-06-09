@@ -638,7 +638,7 @@ class LTDFReactiveInjector:
       clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
       rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window),
       perfNow: window.__LTDF_NATIVE_PERF_NOW__ || (
-        window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null
+        window.performance && window.performance.now ? window.performance.now : null
       )
     }};
   }}
@@ -653,7 +653,7 @@ class LTDFReactiveInjector:
       window.__LTDF_MODIFICADOS__.setTimeout ||
       window.__LTDF_MODIFICADOS__.setInterval ||
       window.__LTDF_MODIFICADOS__.clearInterval ||
-      window.__LTDF_SPEED_VERSION__ !== "perf_now_coupled_timeline_v9"
+      window.__LTDF_SPEED_VERSION__ !== "perf_now_native_scope_v10"
     )
   ) {{
     console.log("[LTDF] Atualizando motor para linha de tempo visual isolada com timers nativos.");
@@ -703,7 +703,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "perf_now_coupled_timeline_v9";
+  window.__LTDF_SPEED_VERSION__ = "perf_now_native_scope_v10";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
@@ -712,7 +712,7 @@ class LTDFReactiveInjector:
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
   const rAFOriginal = window.__LTDF_NATIVOS__.rAF || window.requestAnimationFrame.bind(window);
   const perfNowOriginal = window.__LTDF_NATIVOS__.perfNow || (
-    window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null
+    window.performance && window.performance.now ? window.performance.now : null
   );
 
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
@@ -741,7 +741,7 @@ class LTDFReactiveInjector:
     const container = window.__LTDF_SPEED_CONTAINER__;
     const status = container ? container.relogio : null;
     if (!container || !window.__LTDF_SPEED_ACTIVE__ || !status || status.virtualAcumulado === null) {{
-      return perfNowOriginal ? perfNowOriginal() : 0;
+      return window.__LTDF_NATIVOS__.perfNow ? window.__LTDF_NATIVOS__.perfNow.call(window.performance) : 0;
     }}
     // Retorna o exato andamento do relógio virtual para manter a paridade física do motor
     return status.virtualAcumulado;
