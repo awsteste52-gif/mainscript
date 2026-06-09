@@ -734,30 +734,53 @@ class LTDFReactiveInjector:
     return clearIntervalOriginal(ref);
   }};
 
-  let ultimoTimestampReal = null;
-  let tempoVirtualAcumulado = null;
+  // =====================================================================
+  // REVISÃO SUPREMA DE PENTE FINO - PERSISTÊNCIA GLOBAL (COMMIT aa9e9d2)
+  // =====================================================================
+
+  // Substituir o bloco de inicialização local por armazenamento persistente seguro
+  if (!window.__LTDF_SPEED_CONTAINER__.relogio) {{
+    window.__LTDF_SPEED_CONTAINER__.relogio = {{
+      primeiroReal: null,
+      ultimoReal: null,
+      virtualAcumulado: null
+    }};
+  }}
 
   const customRAF = function(callback) {{
-    return rAFOriginal(function(timestampReal) {{
-      if (typeof callback === "function") {{
-        if (!window.__LTDF_SPEED_ACTIVE__) {{
-          return callback(timestampReal);
-        }}
+    return window.__LTDF_NATIVOS__.rAF.call(window, function(timestampReal) {{
+      if (typeof callback !== "function") return;
 
-        if (typeof ultimoTimestampReal !== "number" || typeof tempoVirtualAcumulado !== "number") {{
-          ultimoTimestampReal = timestampReal;
-          tempoVirtualAcumulado = timestampReal;
-          return callback(timestampReal);
-        }}
-
-        let deltaReal = timestampReal - ultimoTimestampReal;
-        if (!Number.isFinite(deltaReal) || deltaReal < 0 || deltaReal > 100) {{
-          deltaReal = 16.66;
-        }}
-        ultimoTimestampReal = timestampReal;
-        tempoVirtualAcumulado += deltaReal * currentSpeed();
-        return callback(tempoVirtualAcumulado);
+      if (!window.__LTDF_SPEED_CONTAINER__ || !window.__LTDF_SPEED_ACTIVE__) {{
+        return callback(timestampReal);
       }}
+
+      const status = window.__LTDF_SPEED_CONTAINER__.relogio;
+
+      // Ancoragem persistente imune a reinicializações de contexto secundárias
+      if (status.primeiroReal === null) {{
+        status.primeiroReal = timestampReal;
+        status.ultimoReal = timestampReal;
+        status.virtualAcumulado = timestampReal;
+        return callback(timestampReal);
+      }}
+
+      // Cálculo de intervalo real decorrido
+      let deltaReal = timestampReal - status.ultimoReal;
+
+      // Amortecedor contra oscilações e gargalos de CPU na máquina
+      if (deltaReal > 100 || deltaReal < 0) {{
+        deltaReal = 16.66;
+      }}
+
+      status.ultimoReal = timestampReal;
+
+      // Evolução linear estrita da linha de tempo virtual persistente
+      const mult = window.__LTDF_SPEED_CONTAINER__.multiplicador;
+      status.virtualAcumulado += deltaReal * mult;
+
+      // Emite o frame tracionado sem quebras ou recuos matemáticos
+      return callback(status.virtualAcumulado);
     }});
   }};
 
