@@ -589,10 +589,14 @@ class LTDFReactiveInjector:
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
       if (native.rAF) window.requestAnimationFrame = native.rAF;
+      if (native.perfNow && window.performance) window.performance.now = native.perfNow;
+      if (native.perfNow && window.Performance && window.Performance.prototype) window.Performance.prototype.now = native.perfNow;
     }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_TIMEOUT__) window.setTimeout = window.__LTDF_NATIVE_SET_TIMEOUT__; }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_SET_INTERVAL__) window.setInterval = window.__LTDF_NATIVE_SET_INTERVAL__; }} catch (_) {{}}
     try {{ if (window.__LTDF_NATIVE_RAF__) window.requestAnimationFrame = window.__LTDF_NATIVE_RAF__; }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_PERF_NOW__ && window.performance) window.performance.now = window.__LTDF_NATIVE_PERF_NOW__; }} catch (_) {{}}
+    try {{ if (window.__LTDF_NATIVE_PERF_NOW__ && window.Performance && window.Performance.prototype) window.Performance.prototype.now = window.__LTDF_NATIVE_PERF_NOW__; }} catch (_) {{}}
     window.__LTDF_SPEED_LAST_DESTROY__ = {{ reason: reason || "cleanup", href: location.href, at: Date.now() }};
     return {{ ok:true, status:"DESTROYED", reason:reason || "cleanup" }};
   }}
@@ -619,6 +623,8 @@ class LTDFReactiveInjector:
       if (native.setInterval) window.setInterval = native.setInterval;
       if (native.clearInterval) window.clearInterval = native.clearInterval;
       if (native.rAF) window.requestAnimationFrame = native.rAF;
+      if (native.perfNow && window.performance) window.performance.now = native.perfNow;
+      if (native.perfNow && window.Performance && window.Performance.prototype) window.Performance.prototype.now = native.perfNow;
     }} catch (_) {{}}
   }}
 
@@ -630,7 +636,10 @@ class LTDFReactiveInjector:
       clearTimeout: window.__LTDF_NATIVE_CLEAR_TIMEOUT__ || window.clearTimeout.bind(window),
       setInterval: window.__LTDF_NATIVE_SET_INTERVAL__ || window.setInterval.bind(window),
       clearInterval: window.__LTDF_NATIVE_CLEAR_INTERVAL__ || window.clearInterval.bind(window),
-      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window)
+      rAF: window.__LTDF_NATIVE_RAF__ || window.requestAnimationFrame.bind(window),
+      perfNow: window.__LTDF_NATIVE_PERF_NOW__ || (
+        window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null
+      )
     }};
   }}
 
@@ -640,10 +649,11 @@ class LTDFReactiveInjector:
     (
       !window.__LTDF_MODIFICADOS__ ||
       !window.__LTDF_MODIFICADOS__.rAF ||
+      !window.__LTDF_MODIFICADOS__.perfNow ||
       window.__LTDF_MODIFICADOS__.setTimeout ||
       window.__LTDF_MODIFICADOS__.setInterval ||
       window.__LTDF_MODIFICADOS__.clearInterval ||
-      window.__LTDF_SPEED_VERSION__ !== "single_click_loop_native_timers_v8"
+      window.__LTDF_SPEED_VERSION__ !== "perf_now_coupled_timeline_v9"
     )
   ) {{
     console.log("[LTDF] Atualizando motor para linha de tempo visual isolada com timers nativos.");
@@ -661,6 +671,8 @@ class LTDFReactiveInjector:
         window.setInterval = window.__LTDF_NATIVOS__.setInterval;
         window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
         window.requestAnimationFrame = window.__LTDF_NATIVOS__.rAF;
+        if (window.__LTDF_NATIVOS__.perfNow && window.performance) window.performance.now = window.__LTDF_NATIVOS__.perfNow;
+        if (window.__LTDF_NATIVOS__.perfNow && window.Performance && window.Performance.prototype) window.Performance.prototype.now = window.__LTDF_NATIVOS__.perfNow;
       }} catch (_) {{}}
       console.log("[LTDF] Sistema restaurado para a velocidade normal de fabrica.");
       return {{ ok:true, status:"SPEED_RESTORED_TO_NORMAL", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
@@ -672,6 +684,8 @@ class LTDFReactiveInjector:
       window.setInterval = window.__LTDF_NATIVOS__.setInterval;
       window.clearInterval = window.__LTDF_NATIVOS__.clearInterval;
       window.requestAnimationFrame = window.__LTDF_MODIFICADOS__.rAF;
+      if (window.__LTDF_MODIFICADOS__.perfNow && window.performance) window.performance.now = window.__LTDF_MODIFICADOS__.perfNow;
+      if (window.__LTDF_MODIFICADOS__.perfNow && window.Performance && window.Performance.prototype) window.Performance.prototype.now = window.__LTDF_MODIFICADOS__.perfNow;
     }}
     console.log("[LTDF] Atualizando multiplicador de velocidade para: " + MULTIPLICADOR_SPEED + "x");
     return {{ ok:true, status:"SPEED_UPDATED_DYNAMICALLY", href:location.href, multiplier:MULTIPLICADOR_SPEED }};
@@ -689,7 +703,7 @@ class LTDFReactiveInjector:
 
   window.__LTDF_SPEED_ACTIVE__ = true;
   window.__LTDF_SPEED_MOTOR_ACTIVE__ = false;
-  window.__LTDF_SPEED_VERSION__ = "single_click_loop_native_timers_v8";
+  window.__LTDF_SPEED_VERSION__ = "perf_now_coupled_timeline_v9";
   window.__LTDF_SPEED_CONTAINER__ = {{ multiplicador: MULTIPLICADOR_SPEED }};
 
   const setTimeoutOriginal = window.__LTDF_NATIVOS__.setTimeout;
@@ -697,6 +711,9 @@ class LTDFReactiveInjector:
   const setIntervalOriginal = window.__LTDF_NATIVOS__.setInterval;
   const clearIntervalOriginal = window.__LTDF_NATIVOS__.clearInterval || window.clearInterval.bind(window);
   const rAFOriginal = window.__LTDF_NATIVOS__.rAF || window.requestAnimationFrame.bind(window);
+  const perfNowOriginal = window.__LTDF_NATIVOS__.perfNow || (
+    window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null
+  );
 
   window.__LTDF_NATIVE_SET_TIMEOUT__ = setTimeoutOriginal;
   window.__LTDF_NATIVE_DATE_NOW__ = window.__LTDF_NATIVOS__.DateNow;
@@ -704,16 +721,13 @@ class LTDFReactiveInjector:
   window.__LTDF_NATIVE_SET_INTERVAL__ = setIntervalOriginal;
   window.__LTDF_NATIVE_CLEAR_INTERVAL__ = clearIntervalOriginal;
   window.__LTDF_NATIVE_RAF__ = rAFOriginal;
+  window.__LTDF_NATIVE_PERF_NOW__ = perfNowOriginal;
 
   window.setTimeout = setTimeoutOriginal;
   window.setInterval = setIntervalOriginal;
   window.clearInterval = clearIntervalOriginal;
 
-  // =====================================================================
-  // REVISÃO SUPREMA DE PENTE FINO - PERSISTÊNCIA GLOBAL (COMMIT aa9e9d2)
-  // =====================================================================
-
-  // Substituir o bloco de inicialização local por armazenamento persistente seguro
+  // 1. Inicialização estável e centralizada do relógio global persistente
   if (!window.__LTDF_SPEED_CONTAINER__.relogio) {{
     window.__LTDF_SPEED_CONTAINER__.relogio = {{
       primeiroReal: null,
@@ -722,6 +736,25 @@ class LTDFReactiveInjector:
     }};
   }}
 
+  // 2. Acoplamento de Performance à Linha de Tempo Virtual (Força a aceleração visual)
+  const customPerfNow = function() {{
+    const container = window.__LTDF_SPEED_CONTAINER__;
+    const status = container ? container.relogio : null;
+    if (!container || !window.__LTDF_SPEED_ACTIVE__ || !status || status.virtualAcumulado === null) {{
+      return perfNowOriginal ? perfNowOriginal() : 0;
+    }}
+    // Retorna o exato andamento do relógio virtual para manter a paridade física do motor
+    return status.virtualAcumulado;
+  }};
+
+  if (window.performance && window.performance.now) {{
+    try {{ window.performance.now = customPerfNow; }} catch (_) {{}}
+    if (window.Performance && window.Performance.prototype) {{
+      try {{ window.Performance.prototype.now = customPerfNow; }} catch (_) {{}}
+    }}
+  }}
+
+  // 3. Loop Gráfico de Atualização Contínua
   const customRAF = function(callback) {{
     return window.__LTDF_NATIVOS__.rAF.call(window, function(timestampReal) {{
       if (typeof callback !== "function") return;
@@ -732,7 +765,6 @@ class LTDFReactiveInjector:
 
       const status = window.__LTDF_SPEED_CONTAINER__.relogio;
 
-      // Ancoragem persistente imune a reinicializações de contexto secundárias
       if (status.primeiroReal === null) {{
         status.primeiroReal = timestampReal;
         status.ultimoReal = timestampReal;
@@ -740,33 +772,37 @@ class LTDFReactiveInjector:
         return callback(timestampReal);
       }}
 
-      // Cálculo de intervalo real decorrido
       let deltaReal = timestampReal - status.ultimoReal;
 
-      // Amortecedor contra oscilações e gargalos de CPU na máquina
+      // Amortecedor estrito contra quedas de frame do AdsPower
       if (deltaReal > 100 || deltaReal < 0) {{
         deltaReal = 16.66;
       }}
 
       status.ultimoReal = timestampReal;
 
-      // Evolução linear estrita da linha de tempo virtual persistente
+      // Progresso escalar linear do tempo gráfico
       const mult = window.__LTDF_SPEED_CONTAINER__.multiplicador;
       status.virtualAcumulado += deltaReal * mult;
 
-      // Emite o frame tracionado sem quebras ou recuos matemáticos
+      // Dispara o quadro alinhado com o relógio de performance acoplado acima
       return callback(status.virtualAcumulado);
     }});
   }};
 
   window.__LTDF_MODIFICADOS__ = {{
-    rAF: customRAF
+    rAF: customRAF,
+    perfNow: customPerfNow
   }};
 
   if (window.__LTDF_SPEED_ACTIVE__) {{
     window.setTimeout = setTimeoutOriginal;
     window.setInterval = setIntervalOriginal;
     window.clearInterval = clearIntervalOriginal;
+    if (window.performance && window.__LTDF_MODIFICADOS__.perfNow) window.performance.now = window.__LTDF_MODIFICADOS__.perfNow;
+    if (window.Performance && window.Performance.prototype && window.__LTDF_MODIFICADOS__.perfNow) {{
+      window.Performance.prototype.now = window.__LTDF_MODIFICADOS__.perfNow;
+    }}
     window.requestAnimationFrame = customRAF;
   }}
 
